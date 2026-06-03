@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+body {
+  margin: 0;
+  background: #f1f5f9;
+  color: #0f172a;
+  font-family: "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Full letter; zero margin so two 5.5in halves fill the sheet exactly. */
+@page {
+  size: letter portrait;
+  margin: 0;
+}
+
+@media print {
+  body {
+    background: #fff !important;
+    margin: 0;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-root {
+    display: block !important;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* One physical bond sheet = exactly two half-page SOAs stacked. */
+  .print-sheet {
+    width: 8.5in;
+    height: 11in;
+    max-height: 11in;
+    overflow: hidden;
+    page-break-after: always;
+    break-after: page;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    box-sizing: border-box;
+  }
+
+  .print-sheet:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  .soa-half-page {
+    height: 5.5in;
+    max-height: 5.5in;
+    width: 8.5in;
+    box-sizing: border-box;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    overflow: hidden !important;
+  }
+
+  /* Cut line between top and bottom SOA on the same sheet. */
+  .soa-half-page--top {
+    border-bottom: 2px dashed #000;
+  }
+
+  .soa-ledger-body,
+  .soa-half-footer {
+    overflow: hidden;
+  }
+
+  .soa-logo {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
