@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { recomputeRunningBalances } from "./lib/ledger";
 import {
   PURPOSE_KEYS,
@@ -6,10 +6,18 @@ import {
   purposeOptionLabel,
   formatDisplayDate,
 } from "./lib/purposes";
-import { createBaselineRows } from "./lib/enrollment";
+import {
+  fetchStudents,
+  fetchSoaRows,
+  insertStudent,
+  insertSoaRow,
+  insertSoaRowsBulk,
+  deleteStudent,
+  deleteSoaRow,
+  buildDescription,
+  baselinePayloads,
+} from "./lib/supabaseApi";
 import { SoaPrintBundle } from "./components/SoaPrintPages";
-
-const STORAGE_KEY = "pjlc-ledger-db-v1";
 
 const GRADE_LEVELS = [
   { id: "k1", name: "Kinder 1", generalFees: 9650, tuition: 15000, books: 4200, grandTotal: 28850 },
@@ -22,56 +30,33 @@ const GRADE_LEVELS = [
   { id: "g6", name: "Grade 6", generalFees: 14000, tuition: 15000, books: 6500, grandTotal: 35500 },
 ];
 
+const gradeLevels = GRADE_LEVELS.map((g) => ({
+  gradeLevelId: g.id,
+  gradeLevelName: g.name,
+  baseGeneralFees: g.generalFees,
+  baseTuition: g.tuition,
+  baseBooks: g.books,
+  baseGrandTotal: g.grandTotal,
+}));
+
 const currency = (value) =>
   new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(
     Number(value || 0),
   );
 
 const today = () => new Date().toISOString().slice(0, 10);
-const uid = (prefix) => `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 const getGradeById = (id) => GRADE_LEVELS.find((g) => g.id === id);
 
-function buildInitialDatabase() {
-  const students = [
-    { studentId: uid("stu"), studentName: "Alyssa Mae Dela Cruz", gradeLevelId: "k2" },
-    { studentId: uid("stu"), studentName: "Benjamin Santos", gradeLevelId: "g3" },
-    { studentId: uid("stu"), studentName: "Carla Joy Mendoza", gradeLevelId: "g5" },
-    { studentId: uid("stu"), studentName: "Dylan Reyes", gradeLevelId: "g1" },
-  ];
-
-  const ledgerTransactions = [];
-  students.forEach((student, index) => {
-    const grade = getGradeById(student.gradeLevelId);
-    const baseRows = createBaselineRows(student.studentId, grade);
-    const payment = {
-      transactionId: uid("txn"),
-      studentId: student.studentId,
-      date: today(),
-      orNumber: `OR-10${index + 1}`,
-      type: "CREDIT",
-      purposeKey: "monthly_payment",
-      purpose: resolvePurposeLabel("monthly_payment", today()),
-      amount: 2000 + index * 500,
-      createdAt: `${new Date().toISOString()}-p`,
-    };
-    ledgerTransactions.push(...recomputeRunningBalances([...baseRows, payment]));
-  });
-
-  return {
-    gradeLevels: GRADE_LEVELS.map((g) => ({
-      gradeLevelId: g.id,
-      gradeLevelName: g.name,
-      baseGeneralFees: g.generalFees,
-      baseTuition: g.tuition,
-      baseBooks: g.books,
-      baseGrandTotal: g.grandTotal,
-    })),
-    students,
-    ledgerTransactions,
-  };
-}
-
-function StudentsTable({ students, selectedStudentId, onSelect, balanceMap, getGradeName, maxHeight = "max-h-80" }) {
+function StudentsTable({
+  students,
+  selectedStudentId,
+  onSelect,
+  balanceMap,
+  getGradeName,
+  maxHeight = "max-h-80",
+  onDelete,
+  isSaving,
+}) {
   return (
     <div className={`${maxHeight} overflow-auto rounded-md border border-slate-200`}>
       <table className="min-w-full text-sm">
@@ -80,12 +65,13 @@ function StudentsTable({ students, selectedStudentId, onSelect, balanceMap, getG
             <th className="px-3 py-2 text-left font-semibold">Student name</th>
             <th className="px-3 py-2 text-left font-semibold">Grade</th>
             <th className="px-3 py-2 text-right font-semibold">Balance</th>
+            {onDelete && <th className="px-3 py-2 text-right font-semibold"> </th>}
           </tr>
         </thead>
         <tbody>
           {students.length === 0 ? (
             <tr>
-              <td colSpan={3} className="px-3 py-6 text-center text-slate-500">
+              <td colSpan={onDelete ? 4 : 3} className="px-3 py-6 text-center text-slate-500">
                 No students found
               </td>
             </tr>
@@ -104,9 +90,26 @@ function StudentsTable({ students, selectedStudentId, onSelect, balanceMap, getG
                   <td className={`px-3 py-2 ${selected ? "text-slate-200" : "text-slate-600"}`}>
                     {getGradeName(student.gradeLevelId)}
                   </td>
-                  <td className={`px-3 py-2 text-right font-semibold ${selected ? "" : "text-rose-700"}`}>
+                  <td
+                    className={`px-3 py-2 text-right font-semibold ${selected ? "" : "text-rose-700"}`}
+                  >
                     {currency(balanceMap[student.studentId])}
                   </td>
+                  {onDelete && (
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        disabled={isSaving}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDelete(student);
+                        }}
+                        className="rounded bg-rose-600 px-2 py-0.5 text-xs text-white hover:bg-rose-700 disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })
@@ -118,7 +121,13 @@ function StudentsTable({ students, selectedStudentId, onSelect, balanceMap, getG
 }
 
 function App() {
-  const [db, setDb] = useState(buildInitialDatabase);
+  const [students, setStudents] = useState([]);
+  const [ledgerTransactions, setLedgerTransactions] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [cloudMessage, setCloudMessage] = useState("");
+  const [loadError, setLoadError] = useState("");
+
   const [activeTab, setActiveTab] = useState("ledger");
   const [studentForm, setStudentForm] = useState({ studentName: "", gradeLevelId: "k1" });
   const [searchTerm, setSearchTerm] = useState("");
@@ -139,18 +148,34 @@ function App() {
   const [printDateRange, setPrintDateRange] = useState({ startDate: "", endDate: "" });
   const [tickets, setTickets] = useState([]);
 
-  useEffect(() => {
-    const existing = localStorage.getItem(STORAGE_KEY);
-    if (existing) setDb(JSON.parse(existing));
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError("");
+    setCloudMessage("Loading from cloud…");
+    try {
+      const [studentRows, soaRows] = await Promise.all([fetchStudents(), fetchSoaRows()]);
+      setStudents(studentRows);
+      setLedgerTransactions(soaRows);
+      setCloudMessage("Synced with Supabase.");
+    } catch (err) {
+      const msg = err.message ?? "Could not load data from Supabase.";
+      const hint = msg.includes("soa_rows")
+        ? " Run supabase/migrate-soa_rows.sql in the Supabase SQL Editor, then click Refresh."
+        : "";
+      setLoadError(msg + hint);
+      setCloudMessage("");
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-  }, [db]);
+    loadData();
+  }, [loadData]);
 
   const sortedStudents = useMemo(
-    () => [...db.students].sort((a, b) => a.studentName.localeCompare(b.studentName)),
-    [db.students],
+    () => [...students].sort((a, b) => a.studentName.localeCompare(b.studentName)),
+    [students],
   );
 
   useEffect(() => {
@@ -163,9 +188,9 @@ function App() {
 
   const selectedStudentLedger = useMemo(() => {
     return recomputeRunningBalances(
-      db.ledgerTransactions.filter((tx) => tx.studentId === selectedStudentId),
+      ledgerTransactions.filter((tx) => tx.studentId === selectedStudentId),
     );
-  }, [db.ledgerTransactions, selectedStudentId]);
+  }, [ledgerTransactions, selectedStudentId]);
 
   const filteredStudents = useMemo(() => {
     const key = searchTerm.trim().toLowerCase();
@@ -175,83 +200,97 @@ function App() {
 
   const studentBalanceMap = useMemo(() => {
     const map = {};
-    db.students.forEach((student) => {
+    students.forEach((student) => {
       const ledger = recomputeRunningBalances(
-        db.ledgerTransactions.filter((tx) => tx.studentId === student.studentId),
+        ledgerTransactions.filter((tx) => tx.studentId === student.studentId),
       );
       map[student.studentId] = ledger.at(-1)?.runningBalance ?? 0;
     });
     return map;
-  }, [db.ledgerTransactions, db.students]);
+  }, [ledgerTransactions, students]);
 
   const systemTransactionsByDate = useMemo(() => {
-    return recomputeRunningBalances(db.ledgerTransactions).filter((tx) => {
+    return recomputeRunningBalances(ledgerTransactions).filter((tx) => {
       const passStart = !dateFilter.startDate || tx.date >= dateFilter.startDate;
       const passEnd = !dateFilter.endDate || tx.date <= dateFilter.endDate;
       return passStart && passEnd;
     });
-  }, [dateFilter.endDate, dateFilter.startDate, db.ledgerTransactions]);
+  }, [dateFilter.endDate, dateFilter.startDate, ledgerTransactions]);
 
   const purposePreview = resolvePurposeLabel(txForm.purposeKey, txForm.date);
+
+  const runSave = async (label, fn) => {
+    setIsSaving(true);
+    setCloudMessage(label);
+    try {
+      await fn();
+      await loadData();
+    } catch (err) {
+      setCloudMessage(`Error: ${err.message ?? "Save failed"}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleEnrollStudent = (event) => {
     event.preventDefault();
     if (!studentForm.studentName.trim()) return;
 
-    const studentId = uid("stu");
-    const student = {
-      studentId,
-      studentName: studentForm.studentName.trim(),
-      gradeLevelId: studentForm.gradeLevelId,
-    };
-
-    const grade = getGradeById(student.gradeLevelId);
-    const baseline = recomputeRunningBalances(createBaselineRows(studentId, grade));
-
-    setDb((current) => ({
-      ...current,
-      students: [...current.students, student],
-      ledgerTransactions: [...current.ledgerTransactions, ...baseline],
-    }));
-
-    setStudentForm({ studentName: "", gradeLevelId: studentForm.gradeLevelId });
-    setSelectedStudentId(studentId);
-    setActiveTab("ledger");
+    runSave("Saving student to cloud…", async () => {
+      const grade = getGradeById(studentForm.gradeLevelId);
+      const created = await insertStudent({
+        studentName: studentForm.studentName.trim(),
+        gradeLevelId: studentForm.gradeLevelId,
+      });
+      const dateIso = today();
+      const baseline = baselinePayloads(created.studentId, grade, dateIso);
+      await insertSoaRowsBulk(baseline);
+      setStudentForm({ studentName: "", gradeLevelId: studentForm.gradeLevelId });
+      setSelectedStudentId(created.studentId);
+      setActiveTab("ledger");
+    });
   };
 
   const handleAddTransaction = (event) => {
     event.preventDefault();
     if (!selectedStudentId || !txForm.amount || Number(txForm.amount) <= 0) return;
-
     if (!PURPOSE_KEYS[txForm.purposeKey]) return;
 
-    const newTx = {
-      transactionId: uid("txn"),
-      studentId: selectedStudentId,
-      date: txForm.date,
-      orNumber: txForm.orNumber.trim(),
-      type: txForm.type,
-      purposeKey: txForm.purposeKey,
-      purpose: resolvePurposeLabel(txForm.purposeKey, txForm.date),
-      amount: Number(txForm.amount),
-      createdAt: new Date().toISOString(),
-    };
+    const purpose = resolvePurposeLabel(txForm.purposeKey, txForm.date);
 
-    const updatedStudentTransactions = recomputeRunningBalances([
-      ...db.ledgerTransactions.filter((tx) => tx.studentId === selectedStudentId),
-      newTx,
-    ]);
+    runSave("Posting entry to cloud…", async () => {
+      await insertSoaRow({
+        studentId: selectedStudentId,
+        date: txForm.date,
+        description: buildDescription(purpose, txForm.orNumber),
+        amount: Number(txForm.amount),
+        entryType: txForm.type,
+        orNumber: txForm.orNumber.trim(),
+        purposeKey: txForm.purposeKey,
+      });
+      setTxForm((old) => ({ ...old, amount: "", orNumber: "", date: today() }));
+    });
+  };
 
-    const otherStudentsTransactions = db.ledgerTransactions.filter(
-      (tx) => tx.studentId !== selectedStudentId,
-    );
+  const handleDeleteStudent = (student) => {
+    if (
+      !window.confirm(
+        `Delete ${student.studentName} and all ledger entries? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    runSave("Deleting student from cloud…", async () => {
+      await deleteStudent(student.studentId);
+      if (selectedStudentId === student.studentId) setSelectedStudentId("");
+    });
+  };
 
-    setDb((current) => ({
-      ...current,
-      ledgerTransactions: [...otherStudentsTransactions, ...updatedStudentTransactions],
-    }));
-
-    setTxForm((old) => ({ ...old, amount: "", orNumber: "", date: today() }));
+  const handleDeleteTransaction = (tx) => {
+    if (!window.confirm("Delete this ledger entry?")) return;
+    runSave("Deleting entry from cloud…", async () => {
+      await deleteSoaRow(tx.transactionId);
+    });
   };
 
   const openPrintModal = ({ mode = "single", gradeId = "", dateRange = null, billTo = "" } = {}) => {
@@ -291,7 +330,7 @@ function App() {
           .filter((s) => s.gradeLevelId === targetGradeId)
           .forEach((student) => {
             const ledger = recomputeRunningBalances(
-              db.ledgerTransactions.filter((tx) => tx.studentId === student.studentId),
+              ledgerTransactions.filter((tx) => tx.studentId === student.studentId),
             );
             pushTicket(student, ledger);
           });
@@ -301,7 +340,7 @@ function App() {
     if (printMode === "daterange") {
       sortedStudents.forEach((student) => {
         const ledger = recomputeRunningBalances(
-          db.ledgerTransactions.filter((tx) => {
+          ledgerTransactions.filter((tx) => {
             if (tx.studentId !== student.studentId) return false;
             const passStart = !printDateRange.startDate || tx.date >= printDateRange.startDate;
             const passEnd = !printDateRange.endDate || tx.date <= printDateRange.endDate;
@@ -335,8 +374,23 @@ function App() {
           Palawan Jewels Learning Center — Student Ledger & SOA
         </h1>
         <p className="mt-1 text-sm text-slate-600">
-          School Year 2026-2027 · Two half-page SOAs per bond sheet when printing
+          School Year 2026-2027 · Cloud (Supabase) · Two half-page SOAs per bond sheet
         </p>
+
+        {(isLoading || isSaving || cloudMessage || loadError) && (
+          <div
+            className={`mt-3 rounded-md px-3 py-2 text-sm ${
+              loadError
+                ? "border border-rose-200 bg-rose-50 text-rose-800"
+                : "border border-slate-200 bg-slate-50 text-slate-700"
+            }`}
+          >
+            {loadError && <p>{loadError}</p>}
+            {isLoading && !loadError && <p>Loading students and ledger from Supabase…</p>}
+            {isSaving && !isLoading && <p>{cloudMessage || "Saving to cloud…"}</p>}
+            {!isLoading && !isSaving && cloudMessage && !loadError && <p>{cloudMessage}</p>}
+          </div>
+        )}
 
         <div className="mt-5 flex flex-wrap gap-2">
           {[
@@ -347,6 +401,7 @@ function App() {
             <button
               key={tab.id}
               type="button"
+              disabled={isLoading}
               onClick={() => setActiveTab(tab.id)}
               className={`rounded-lg px-4 py-2 text-sm font-semibold ${
                 activeTab === tab.id
@@ -357,13 +412,21 @@ function App() {
               {tab.label}
             </button>
           ))}
+          <button
+            type="button"
+            disabled={isLoading || isSaving}
+            onClick={loadData}
+            className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-300"
+          >
+            Refresh
+          </button>
         </div>
 
         {activeTab === "enroll" && (
           <section className="mt-6 rounded-lg border border-slate-200 p-4">
             <h2 className="text-lg font-semibold">Enroll New Student</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Saves the student and auto-posts General Fees, Tuition, and Books from the fee matrix.
+              Saves to Supabase and auto-posts General Fees, Tuition, and Books from the fee matrix.
             </p>
             <form className="mt-4 grid gap-4 md:grid-cols-3" onSubmit={handleEnrollStudent}>
               <label className="flex flex-col gap-1">
@@ -375,6 +438,7 @@ function App() {
                     setStudentForm((old) => ({ ...old, studentName: e.target.value }))
                   }
                   required
+                  disabled={isSaving}
                 />
               </label>
               <label className="flex flex-col gap-1">
@@ -385,8 +449,9 @@ function App() {
                   onChange={(e) =>
                     setStudentForm((old) => ({ ...old, gradeLevelId: e.target.value }))
                   }
+                  disabled={isSaving}
                 >
-                  {db.gradeLevels.map((grade) => (
+                  {gradeLevels.map((grade) => (
                     <option key={grade.gradeLevelId} value={grade.gradeLevelId}>
                       {grade.gradeLevelName}
                     </option>
@@ -396,7 +461,8 @@ function App() {
               <div className="flex items-end">
                 <button
                   type="submit"
-                  className="w-full rounded-md bg-emerald-700 px-4 py-2 font-semibold text-white hover:bg-emerald-800"
+                  disabled={isSaving || isLoading}
+                  className="w-full rounded-md bg-emerald-700 px-4 py-2 font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
                 >
                   Save Student + Post Baseline Fees
                 </button>
@@ -422,6 +488,8 @@ function App() {
                   onSelect={setSelectedStudentId}
                   balanceMap={studentBalanceMap}
                   getGradeName={getGradeName}
+                  onDelete={handleDeleteStudent}
+                  isSaving={isSaving}
                 />
               </div>
             </div>
@@ -439,7 +507,7 @@ function App() {
                       billTo: selectedStudent?.studentName ?? "",
                     })
                   }
-                  disabled={!selectedStudent}
+                  disabled={!selectedStudent || isLoading}
                   className="rounded-md bg-indigo-700 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-800 disabled:opacity-50"
                 >
                   Print SOA
@@ -458,6 +526,7 @@ function App() {
                     value={txForm.date}
                     onChange={(e) => setTxForm((old) => ({ ...old, date: e.target.value }))}
                     required
+                    disabled={isSaving}
                   />
                 </label>
                 <label className="flex flex-col gap-1">
@@ -469,6 +538,7 @@ function App() {
                     onChange={(e) =>
                       setTxForm((old) => ({ ...old, orNumber: e.target.value }))
                     }
+                    disabled={isSaving}
                   />
                 </label>
                 <label className="flex flex-col gap-1">
@@ -477,6 +547,7 @@ function App() {
                     className="rounded-md border border-slate-300 px-3 py-2 text-sm"
                     value={txForm.type}
                     onChange={(e) => setTxForm((old) => ({ ...old, type: e.target.value }))}
+                    disabled={isSaving}
                   >
                     <option value="DEBIT">Debit (add to balance)</option>
                     <option value="CREDIT">Credit (subtract from balance)</option>
@@ -493,6 +564,7 @@ function App() {
                     value={txForm.amount}
                     onChange={(e) => setTxForm((old) => ({ ...old, amount: e.target.value }))}
                     required
+                    disabled={isSaving}
                   />
                 </label>
                 <label className="flex flex-col gap-1">
@@ -503,6 +575,7 @@ function App() {
                     onChange={(e) =>
                       setTxForm((old) => ({ ...old, purposeKey: e.target.value }))
                     }
+                    disabled={isSaving}
                   >
                     {Object.keys(PURPOSE_KEYS).map((key) => (
                       <option key={key} value={key}>
@@ -514,7 +587,7 @@ function App() {
                 <div className="flex items-end">
                   <button
                     type="submit"
-                    disabled={!selectedStudentId}
+                    disabled={!selectedStudentId || isSaving || isLoading}
                     className="w-full rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
                   >
                     Post entry
@@ -542,12 +615,13 @@ function App() {
                       <th className="px-3 py-2 text-left">Transaction</th>
                       <th className="px-3 py-2 text-right">Amount</th>
                       <th className="px-3 py-2 text-right">Balance</th>
+                      <th className="px-3 py-2 text-right"> </th>
                     </tr>
                   </thead>
                   <tbody>
                     {selectedStudentLedger.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-3 py-8 text-center text-slate-500">
+                        <td colSpan={7} className="px-3 py-8 text-center text-slate-500">
                           No transactions yet
                         </td>
                       </tr>
@@ -559,10 +633,20 @@ function App() {
                           </td>
                           <td className="px-3 py-2">{tx.orNumber || "—"}</td>
                           <td className="px-3 py-2">{tx.type}</td>
-                          <td className="px-3 py-2">{tx.purpose}</td>
+                          <td className="px-3 py-2 whitespace-pre-line">{tx.purpose}</td>
                           <td className="px-3 py-2 text-right">{currency(tx.amount)}</td>
                           <td className="px-3 py-2 text-right font-semibold">
                             {currency(tx.runningBalance)}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              type="button"
+                              disabled={isSaving}
+                              onClick={() => handleDeleteTransaction(tx)}
+                              className="text-xs text-rose-600 hover:underline disabled:opacity-50"
+                            >
+                              Delete
+                            </button>
                           </td>
                         </tr>
                       ))
@@ -604,7 +688,7 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {db.gradeLevels.map((grade) => {
+                    {gradeLevels.map((grade) => {
                       const studentsInGrade = sortedStudents.filter(
                         (s) => s.gradeLevelId === grade.gradeLevelId,
                       );
@@ -622,7 +706,7 @@ function App() {
                           <td className="px-3 py-2 text-right">
                             <button
                               type="button"
-                              disabled={studentsInGrade.length === 0}
+                              disabled={studentsInGrade.length === 0 || isLoading}
                               onClick={() =>
                                 openPrintModal({ mode: "grade", gradeId: grade.gradeLevelId })
                               }
@@ -675,8 +759,8 @@ function App() {
                 </button>
               </div>
               <p className="mt-1 text-xs text-slate-600">
-                Prints two half-page SOAs per bond sheet. Overflow continues on the next
-                half with Balance Forwarded; Amount Due only on each student&apos;s last half.
+                Prints two half-page SOAs per bond sheet. Overflow continues on the next half
+                with Balance Forwarded; Amount Due only on each student&apos;s last half.
               </p>
               <div className="mt-3 max-h-80 overflow-auto rounded-md border border-slate-200">
                 <table className="min-w-full text-sm">
@@ -703,10 +787,10 @@ function App() {
                             {formatDisplayDate(tx.date)}
                           </td>
                           <td className="px-3 py-2">
-                            {db.students.find((s) => s.studentId === tx.studentId)?.studentName}
+                            {students.find((s) => s.studentId === tx.studentId)?.studentName}
                           </td>
                           <td className="px-3 py-2">{tx.orNumber || "—"}</td>
-                          <td className="px-3 py-2">{tx.purpose}</td>
+                          <td className="px-3 py-2 whitespace-pre-line">{tx.purpose}</td>
                           <td className="px-3 py-2 text-right">
                             {currency(Math.abs(tx.signedAmount))}
                           </td>
@@ -753,7 +837,7 @@ function App() {
                   onChange={(e) => setPrintGradeId(e.target.value)}
                 >
                   <option value="">Select grade</option>
-                  {db.gradeLevels.map((g) => (
+                  {gradeLevels.map((g) => (
                     <option key={g.gradeLevelId} value={g.gradeLevelId}>
                       {g.gradeLevelName}
                     </option>
