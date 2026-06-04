@@ -9,12 +9,14 @@ import {
 import {
   fetchStudents,
   fetchSoaRows,
+  ensureCurrentSchoolYear,
   insertStudent,
   insertSoaRow,
   insertSoaRowsBulk,
   deleteStudent,
-  deleteAllStudents,
   deleteSoaRow,
+  archiveSchoolYearAndStartNew,
+  formatSchoolYearLabel,
   buildDescription,
   baselinePayloads,
 } from "./lib/supabaseApi";
@@ -23,6 +25,7 @@ import { SoaPrintBundle } from "./components/SoaPrintPages";
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD ?? "";
 const FEE_SETTINGS_KEY = "pjlc_fee_settings_v1";
 const AUTH_SESSION_KEY = "pjlc_app_unlocked";
+const SCHOOL_YEAR_SESSION_KEY = "pjlc_selected_school_year";
 
 const DEFAULT_GRADE_LEVELS = [
   { id: "k1", name: "Kinder 1", generalFees: 9650, tuition: 15000, books: 4200, grandTotal: 28850 },
@@ -90,6 +93,7 @@ const downloadWorkbook = ({
   gradeLevels,
   balanceMap,
   getGradeName,
+  schoolYearLabel,
 }) => {
   const studentRows = students.map((student) => [
     student.studentId,
@@ -162,6 +166,7 @@ const downloadWorkbook = ({
   <table>
     <tbody>
       <tr><th>Generated</th><td>${escapeHtml(generatedAt)}</td></tr>
+      <tr><th>School year</th><td>${escapeHtml(schoolYearLabel)}</td></tr>
       <tr><th>Student count</th><td>${students.length}</td></tr>
       <tr><th>Transaction count</th><td>${ledgerTransactions.length}</td></tr>
     </tbody>
@@ -201,7 +206,7 @@ const downloadWorkbook = ({
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `PJLC-full-backup-${today()}.xls`;
+  link.download = `PJLC-${schoolYearLabel || "school-year"}-backup-${today()}.xls`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -306,6 +311,10 @@ function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [cloudMessage, setCloudMessage] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [schoolYears, setSchoolYears] = useState([]);
+  const [activeSchoolYearId, setActiveSchoolYearId] = useState(
+    () => sessionStorage.getItem(SCHOOL_YEAR_SESSION_KEY) || "",
+  );
 
   const [activeTab, setActiveTab] = useState("ledger");
   const [studentForm, setStudentForm] = useState({ studentName: "", gradeLevelId: "k1" });
@@ -331,7 +340,12 @@ function App() {
   const [adminPasswordInput, setAdminPasswordInput] = useState("");
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
   const [adminMessage, setAdminMessage] = useState("");
-  const [deleteAllPasswords, setDeleteAllPasswords] = useState({ first: "", second: "" });
+  const [archiveForm, setArchiveForm] = useState({
+    startYear: "",
+    endYear: "",
+    firstPassword: "",
+    secondPassword: "",
+  });
 
   const gradeLevels = useMemo(() => makeGradeLevels(feeSettings), [feeSettings]);
   const getGradeById = useCallback(
@@ -339,26 +353,48 @@ function App() {
     [feeSettings],
   );
 
-  const loadData = useCallback(async () => {
+  const activeSchoolYear = useMemo(
+    () => schoolYears.find((year) => year.schoolYearId === activeSchoolYearId) ?? schoolYears[0],
+    [activeSchoolYearId, schoolYears],
+  );
+
+  const loadData = useCallback(async (targetSchoolYearId = activeSchoolYearId) => {
     setIsLoading(true);
     setLoadError("");
     setCloudMessage("Loading from cloud…");
     try {
-      const [studentRows, soaRows] = await Promise.all([fetchStudents(), fetchSoaRows()]);
+      const { current, years } = await ensureCurrentSchoolYear();
+      const selectedYearId =
+        targetSchoolYearId && years.some((year) => year.schoolYearId === targetSchoolYearId)
+          ? targetSchoolYearId
+          : current.schoolYearId;
+      const [studentRows, soaRows] = await Promise.all([
+        fetchStudents(selectedYearId),
+        fetchSoaRows(selectedYearId),
+      ]);
+      setSchoolYears(years);
+      setActiveSchoolYearId(selectedYearId);
+      sessionStorage.setItem(SCHOOL_YEAR_SESSION_KEY, selectedYearId);
       setStudents(studentRows);
       setLedgerTransactions(soaRows);
       setCloudMessage("Synced with Supabase.");
     } catch (err) {
       const msg = err.message ?? "Could not load data from Supabase.";
-      const hint = msg.includes("soa_rows")
-        ? " Run supabase/migrate-soa_rows.sql in the Supabase SQL Editor, then click Refresh."
-        : "";
+      const needsLatestMigration =
+        msg.includes("school_years") ||
+        msg.includes("school_year_id") ||
+        msg.includes("schema cache");
+      const hint = needsLatestMigration
+        ? " Run the latest supabase/migrate-soa_rows.sql in the Supabase SQL Editor, then click Refresh."
+        : msg.includes("soa_rows")
+          ? " Run supabase/migrate-soa_rows.sql in the Supabase SQL Editor, then click Refresh."
+          : "";
       setLoadError(msg + hint);
       setCloudMessage("");
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [activeSchoolYearId]);
 
   useEffect(() => {
     if (!isAppUnlocked) return;
@@ -414,13 +450,20 @@ function App() {
     setIsSaving(true);
     setCloudMessage(label);
     try {
-      await fn();
-      await loadData();
+      const targetSchoolYearId = await fn();
+      await loadData(targetSchoolYearId);
     } catch (err) {
       setCloudMessage(`Error: ${err.message ?? "Save failed"}`);
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSchoolYearChange = (schoolYearId) => {
+    sessionStorage.setItem(SCHOOL_YEAR_SESSION_KEY, schoolYearId);
+    setActiveSchoolYearId(schoolYearId);
+    setSelectedStudentId("");
+    setSelectedPrintStudentIds([]);
   };
 
   const handleLogin = (event) => {
@@ -450,16 +493,21 @@ function App() {
 
   const handleEnrollStudent = (event) => {
     event.preventDefault();
+    if (!activeSchoolYear) return;
     if (!studentForm.studentName.trim()) return;
 
     runSave("Saving student to cloud…", async () => {
       const grade = getGradeById(studentForm.gradeLevelId);
       const created = await insertStudent({
+        schoolYearId: activeSchoolYear.schoolYearId,
         studentName: studentForm.studentName.trim(),
         gradeLevelId: studentForm.gradeLevelId,
       });
       const dateIso = today();
-      const baseline = baselinePayloads(created.studentId, grade, dateIso);
+      const baseline = baselinePayloads(created.studentId, grade, dateIso).map((row) => ({
+        ...row,
+        schoolYearId: activeSchoolYear.schoolYearId,
+      }));
       await insertSoaRowsBulk(baseline);
       setStudentForm({ studentName: "", gradeLevelId: studentForm.gradeLevelId });
       setSelectedStudentId(created.studentId);
@@ -469,6 +517,7 @@ function App() {
 
   const handleAddTransaction = (event) => {
     event.preventDefault();
+    if (!activeSchoolYear) return;
     if (!effectiveSelectedStudentId || !txForm.amount || Number(txForm.amount) <= 0) return;
     if (txForm.purposeKey !== "other" && !PURPOSE_KEYS[txForm.purposeKey]) return;
     if (txForm.purposeKey === "other" && !txForm.customPurpose.trim()) return;
@@ -480,6 +529,7 @@ function App() {
 
     runSave("Posting entry to cloud…", async () => {
       await insertSoaRow({
+        schoolYearId: activeSchoolYear.schoolYearId,
         studentId: effectiveSelectedStudentId,
         date: txForm.date,
         description: buildDescription(purpose, txForm.orNumber),
@@ -549,30 +599,56 @@ function App() {
     setAdminMessage("Prices reset to defaults for future enrollments.");
   };
 
-  const handleDeleteAllStudents = () => {
+  const handleArchiveAllStudents = () => {
+    const startYear = archiveForm.startYear.trim();
+    const endYear = archiveForm.endYear.trim();
     if (
-      deleteAllPasswords.first !== ADMIN_PASSWORD ||
-      deleteAllPasswords.second !== ADMIN_PASSWORD
+      archiveForm.firstPassword !== ADMIN_PASSWORD ||
+      archiveForm.secondPassword !== ADMIN_PASSWORD
     ) {
-      setAdminMessage("Enter the admin password in both delete confirmation fields.");
+      setAdminMessage("Enter the admin password in both archive confirmation fields.");
+      return;
+    }
+    if (!/^\d{4}$/.test(startYear) || !/^\d{4}$/.test(endYear)) {
+      setAdminMessage("Enter both school years as 4-digit years.");
+      return;
+    }
+    if (Number(endYear) <= Number(startYear)) {
+      setAdminMessage("The ending school year must be after the starting school year.");
+      return;
+    }
+    if (!activeSchoolYear) {
+      setAdminMessage("No active school year is selected.");
+      return;
+    }
+    if (!activeSchoolYear.isCurrent) {
+      setAdminMessage("Switch to the current school year before archiving all records.");
       return;
     }
 
+    const archiveLabel = formatSchoolYearLabel(startYear, endYear);
+
     if (
       !window.confirm(
-        "Delete ALL students and ALL ledger transactions? This cannot be undone.",
+        `Archive all records in ${activeSchoolYear.label} as ${archiveLabel} and start a fresh current school year?`,
       )
     ) {
       return;
     }
 
-    runSave("Deleting all students and ledger entries from cloud…", async () => {
-      await deleteAllStudents();
+    runSave("Archiving current school year and starting a fresh one…", async () => {
+      const nextYear = await archiveSchoolYearAndStartNew({
+        schoolYearId: activeSchoolYear.schoolYearId,
+        archiveLabel,
+      });
+      sessionStorage.setItem(SCHOOL_YEAR_SESSION_KEY, nextYear.schoolYearId);
+      setActiveSchoolYearId(nextYear.schoolYearId);
       setSelectedStudentId("");
       setSelectedPrintStudentIds([]);
-      setDeleteAllPasswords({ first: "", second: "" });
+      setArchiveForm({ startYear: "", endYear: "", firstPassword: "", secondPassword: "" });
+      return nextYear.schoolYearId;
     });
-    setAdminMessage("Delete request sent.");
+    setAdminMessage("Archive request sent.");
   };
 
   const togglePrintStudent = (studentId) => {
@@ -721,7 +797,8 @@ function App() {
           Palawan Jewels Learning Center — Student Ledger & SOA
         </h1>
         <p className="mt-1 text-sm text-slate-600">
-          School Year 2026-2027 · Cloud (Supabase) · Two half-page SOAs per bond sheet
+          {activeSchoolYear?.label ?? "School year loading"} · Cloud (Supabase) · Two half-page
+          SOAs per bond sheet
         </p>
 
         {(isLoading || isSaving || cloudMessage || loadError) && (
@@ -739,7 +816,23 @@ function App() {
           </div>
         )}
 
-        <div className="mt-5 flex flex-wrap gap-2">
+        <div className="mt-5 flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
+            <span>School Year</span>
+            <select
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-medium text-slate-900"
+              value={activeSchoolYearId}
+              onChange={(e) => handleSchoolYearChange(e.target.value)}
+              disabled={isLoading || isSaving || schoolYears.length === 0}
+            >
+              {schoolYears.map((year) => (
+                <option key={year.schoolYearId} value={year.schoolYearId}>
+                  {year.label}
+                  {year.isCurrent ? " (Current)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
           {[
             { id: "enroll", label: "Enroll Student" },
             { id: "ledger", label: "Ledger & Transactions" },
@@ -816,7 +909,7 @@ function App() {
               <div className="flex items-end">
                 <button
                   type="submit"
-                  disabled={isSaving || isLoading}
+                  disabled={!activeSchoolYear || isSaving || isLoading}
                   className="w-full rounded-md bg-emerald-700 px-4 py-2 font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
                 >
                   Save Student + Post Baseline Fees
@@ -955,7 +1048,7 @@ function App() {
                 <div className="flex items-end">
                   <button
                     type="submit"
-                    disabled={!effectiveSelectedStudentId || isSaving || isLoading}
+                    disabled={!activeSchoolYear || !effectiveSelectedStudentId || isSaving || isLoading}
                     className="w-full rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
                   >
                     Post entry
@@ -1124,6 +1217,7 @@ function App() {
                       gradeLevels,
                       balanceMap: studentBalanceMap,
                       getGradeName,
+                      schoolYearLabel: activeSchoolYear?.label ?? "",
                     })
                   }
                   disabled={isLoading}
@@ -1370,39 +1464,74 @@ function App() {
                   </div>
                 </div>
 
-                <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
-                  <h2 className="text-lg font-semibold text-rose-900">Delete All Students</h2>
-                  <p className="mt-1 text-sm text-rose-800">
-                    This deletes every student and every ledger transaction from Supabase.
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                  <h2 className="text-lg font-semibold text-amber-950">Archive All Students</h2>
+                  <p className="mt-1 text-sm text-amber-900">
+                    Saves the selected year as a past school year, then opens a fresh current year.
+                    Past years stay selectable for viewing, editing, and SOA printing.
                   </p>
-                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <div className="mt-4 grid gap-3 md:grid-cols-5">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs font-medium text-amber-950">S.Y start</span>
+                      <input
+                        type="number"
+                        min="1900"
+                        max="3000"
+                        className="rounded-md border border-amber-300 px-3 py-2 text-sm"
+                        placeholder="2026"
+                        value={archiveForm.startYear}
+                        onChange={(e) =>
+                          setArchiveForm((old) => ({ ...old, startYear: e.target.value }))
+                        }
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs font-medium text-amber-950">S.Y end</span>
+                      <input
+                        type="number"
+                        min="1900"
+                        max="3000"
+                        className="rounded-md border border-amber-300 px-3 py-2 text-sm"
+                        placeholder="2027"
+                        value={archiveForm.endYear}
+                        onChange={(e) =>
+                          setArchiveForm((old) => ({ ...old, endYear: e.target.value }))
+                        }
+                      />
+                    </label>
                     <input
                       type="password"
-                      className="rounded-md border border-rose-300 px-3 py-2 text-sm"
+                      className="rounded-md border border-amber-300 px-3 py-2 text-sm"
                       placeholder="Admin password"
-                      value={deleteAllPasswords.first}
+                      value={archiveForm.firstPassword}
                       onChange={(e) =>
-                        setDeleteAllPasswords((old) => ({ ...old, first: e.target.value }))
+                        setArchiveForm((old) => ({ ...old, firstPassword: e.target.value }))
                       }
                     />
                     <input
                       type="password"
-                      className="rounded-md border border-rose-300 px-3 py-2 text-sm"
+                      className="rounded-md border border-amber-300 px-3 py-2 text-sm"
                       placeholder="Re-enter admin password"
-                      value={deleteAllPasswords.second}
+                      value={archiveForm.secondPassword}
                       onChange={(e) =>
-                        setDeleteAllPasswords((old) => ({ ...old, second: e.target.value }))
+                        setArchiveForm((old) => ({ ...old, secondPassword: e.target.value }))
                       }
                     />
                     <button
                       type="button"
-                      onClick={handleDeleteAllStudents}
-                      disabled={isSaving || isLoading}
-                      className="rounded-md bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800 disabled:opacity-50"
+                      onClick={handleArchiveAllStudents}
+                      disabled={isSaving || isLoading || !activeSchoolYear || !activeSchoolYear.isCurrent}
+                      className="rounded-md bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-50"
                     >
-                      Delete All Students
+                      Archive All
                     </button>
                   </div>
+                  <p className="mt-2 text-xs text-amber-900">
+                    Archive label preview:{" "}
+                    <span className="font-semibold">
+                      S.Y {archiveForm.startYear || "____"} to {archiveForm.endYear || "____"}
+                    </span>
+                  </p>
                 </div>
               </>
             )}
@@ -1504,6 +1633,7 @@ function App() {
           tickets={tickets}
           billToPrinted={billToPrinted}
           documentDate={documentDate}
+          schoolYearLabel={activeSchoolYear?.label ?? ""}
         />
       </div>
     </div>

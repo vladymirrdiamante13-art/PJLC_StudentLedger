@@ -17,6 +17,7 @@ function transactionLabel(tx) {
 function HalfPage({
   billTo,
   statementDate,
+  schoolYearLabel,
   rows,
   isLast,
   amountDue,
@@ -45,6 +46,7 @@ function HalfPage({
         </div>
         <div className="shrink-0 text-right">
           <p className="text-sm font-bold">STATEMENT OF ACCOUNT</p>
+          {schoolYearLabel && <p className="text-[9px]">{schoolYearLabel}</p>}
           <p className="text-[9px]">{statementDate}</p>
         </div>
       </div>
@@ -137,7 +139,7 @@ function buildPrintSheets(tickets) {
   return sheets;
 }
 
-export function SoaPrintBundle({ tickets, billToPrinted, documentDate }) {
+export function SoaPrintBundle({ tickets, billToPrinted, documentDate, schoolYearLabel }) {
   const sheets = buildPrintSheets(tickets);
 
   return (
@@ -149,6 +151,7 @@ export function SoaPrintBundle({ tickets, billToPrinted, documentDate }) {
               key={half.key}
               billTo={billToPrinted || half.billTo}
               statementDate={documentDate}
+              schoolYearLabel={schoolYearLabel}
               rows={half.rows}
               isLast={half.isLast}
               amountDue={half.amountDue}
