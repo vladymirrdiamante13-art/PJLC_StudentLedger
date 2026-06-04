@@ -118,6 +118,13 @@ export async function deleteStudent(studentId) {
   if (error) throw error;
 }
 
+export async function deleteAllStudents() {
+  const { error: rowErr } = await supabase.from("soa_rows").delete().not("id", "is", null);
+  if (rowErr) throw rowErr;
+  const { error } = await supabase.from("students").delete().not("student_id", "is", null);
+  if (error) throw error;
+}
+
 export async function deleteSoaRow(transactionId) {
   const { error } = await supabase.from("soa_rows").delete().eq("id", transactionId);
   if (error) throw error;

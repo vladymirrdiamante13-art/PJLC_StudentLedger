@@ -13,13 +13,18 @@ import {
   insertSoaRow,
   insertSoaRowsBulk,
   deleteStudent,
+  deleteAllStudents,
   deleteSoaRow,
   buildDescription,
   baselinePayloads,
 } from "./lib/supabaseApi";
 import { SoaPrintBundle } from "./components/SoaPrintPages";
 
-const GRADE_LEVELS = [
+const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD ?? "";
+const FEE_SETTINGS_KEY = "pjlc_fee_settings_v1";
+const AUTH_SESSION_KEY = "pjlc_app_unlocked";
+
+const DEFAULT_GRADE_LEVELS = [
   { id: "k1", name: "Kinder 1", generalFees: 9650, tuition: 15000, books: 4200, grandTotal: 28850 },
   { id: "k2", name: "Kinder 2", generalFees: 9650, tuition: 15000, books: 4200, grandTotal: 28850 },
   { id: "g1", name: "Grade 1", generalFees: 11100, tuition: 15000, books: 5800, grandTotal: 31900 },
@@ -30,22 +35,178 @@ const GRADE_LEVELS = [
   { id: "g6", name: "Grade 6", generalFees: 14000, tuition: 15000, books: 6500, grandTotal: 35500 },
 ];
 
-const gradeLevels = GRADE_LEVELS.map((g) => ({
-  gradeLevelId: g.id,
-  gradeLevelName: g.name,
-  baseGeneralFees: g.generalFees,
-  baseTuition: g.tuition,
-  baseBooks: g.books,
-  baseGrandTotal: g.grandTotal,
-}));
-
 const currency = (value) =>
   new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(
     Number(value || 0),
   );
 
 const today = () => new Date().toISOString().slice(0, 10);
-const getGradeById = (id) => GRADE_LEVELS.find((g) => g.id === id);
+
+const normalizeGrade = (grade) => {
+  const generalFees = Number(grade.generalFees) || 0;
+  const tuition = Number(grade.tuition) || 0;
+  const books = Number(grade.books) || 0;
+  return {
+    ...grade,
+    generalFees,
+    tuition,
+    books,
+    grandTotal: generalFees + tuition + books,
+  };
+};
+
+const makeGradeLevels = (grades) =>
+  grades.map((g) => ({
+    gradeLevelId: g.id,
+    gradeLevelName: g.name,
+    baseGeneralFees: g.generalFees,
+    baseTuition: g.tuition,
+    baseBooks: g.books,
+    baseGrandTotal: g.grandTotal,
+  }));
+
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+
+const workbookSheet = (name, headers, rows) => `
+  <h2>${escapeHtml(name)}</h2>
+  <table>
+    <thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
+    <tbody>
+      ${rows
+        .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+        .join("")}
+    </tbody>
+  </table>
+`;
+
+const downloadWorkbook = ({
+  students,
+  ledgerTransactions,
+  gradeLevels,
+  balanceMap,
+  getGradeName,
+}) => {
+  const studentRows = students.map((student) => [
+    student.studentId,
+    student.studentName,
+    getGradeName(student.gradeLevelId),
+    balanceMap[student.studentId] ?? 0,
+  ]);
+
+  const transactionRows = ledgerTransactions.map((tx) => {
+    const student = students.find((s) => s.studentId === tx.studentId);
+    return [
+      tx.transactionId,
+      tx.date,
+      student?.studentName ?? "",
+      getGradeName(student?.gradeLevelId),
+      tx.orNumber,
+      tx.type,
+      tx.purpose,
+      tx.amount,
+      tx.signedAmount ?? "",
+      tx.runningBalance ?? "",
+      tx.createdAt,
+    ];
+  });
+
+  const balanceRows = students.map((student) => {
+    const ledger = recomputeRunningBalances(
+      ledgerTransactions.filter((tx) => tx.studentId === student.studentId),
+    );
+    const debits = ledger
+      .filter((tx) => tx.type === "DEBIT")
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    const credits = ledger
+      .filter((tx) => tx.type === "CREDIT")
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    return [
+      student.studentName,
+      getGradeName(student.gradeLevelId),
+      debits,
+      credits,
+      ledger.at(-1)?.runningBalance ?? 0,
+    ];
+  });
+
+  const feeRows = gradeLevels.map((grade) => [
+    grade.gradeLevelName,
+    grade.baseGeneralFees,
+    grade.baseTuition,
+    grade.baseBooks,
+    grade.baseGrandTotal,
+  ]);
+
+  const generatedAt = new Date().toLocaleString("en-PH");
+  const html = `<!doctype html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+  xmlns:x="urn:schemas-microsoft-com:office:excel"
+  xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: Calibri, Arial, sans-serif; }
+    table { border-collapse: collapse; margin-bottom: 28px; }
+    th { background: #0f172a; color: white; font-weight: 700; }
+    th, td { border: 1px solid #cbd5e1; padding: 6px 8px; mso-number-format:"\\@"; }
+    h1 { color: #0f172a; }
+  </style>
+</head>
+<body>
+  <h1>Palawan Jewels Learning Center - Full Backup</h1>
+  <table>
+    <tbody>
+      <tr><th>Generated</th><td>${escapeHtml(generatedAt)}</td></tr>
+      <tr><th>Student count</th><td>${students.length}</td></tr>
+      <tr><th>Transaction count</th><td>${ledgerTransactions.length}</td></tr>
+    </tbody>
+  </table>
+  ${workbookSheet("Students", ["Student ID", "Student Name", "Grade", "Current Balance"], studentRows)}
+  ${workbookSheet(
+    "Transactions",
+    [
+      "Transaction ID",
+      "Date",
+      "Student",
+      "Grade",
+      "OR #",
+      "Type",
+      "Purpose",
+      "Amount",
+      "Signed Amount",
+      "Running Balance",
+      "Created At",
+    ],
+    transactionRows,
+  )}
+  ${workbookSheet(
+    "Student Balances",
+    ["Student", "Grade", "Total Debits", "Total Credits", "Current Balance"],
+    balanceRows,
+  )}
+  ${workbookSheet(
+    "Fee Matrix",
+    ["Grade", "General Fees", "Tuition", "Books", "Grand Total"],
+    feeRows,
+  )}
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `PJLC-full-backup-${today()}.xls`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
 
 function StudentsTable({
   students,
@@ -121,6 +282,24 @@ function StudentsTable({
 }
 
 function App() {
+  const [isAppUnlocked, setIsAppUnlocked] = useState(
+    () => sessionStorage.getItem(AUTH_SESSION_KEY) === "true",
+  );
+  const [loginPasswordInput, setLoginPasswordInput] = useState("");
+  const [loginMessage, setLoginMessage] = useState("");
+  const [feeSettings, setFeeSettings] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(FEE_SETTINGS_KEY) || "null");
+      if (Array.isArray(stored)) {
+        return DEFAULT_GRADE_LEVELS.map((base) =>
+          normalizeGrade({ ...base, ...(stored.find((g) => g.id === base.id) ?? {}) }),
+        );
+      }
+    } catch {
+      localStorage.removeItem(FEE_SETTINGS_KEY);
+    }
+    return DEFAULT_GRADE_LEVELS.map(normalizeGrade);
+  });
   const [students, setStudents] = useState([]);
   const [ledgerTransactions, setLedgerTransactions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -138,6 +317,7 @@ function App() {
     type: "CREDIT",
     amount: "",
     purposeKey: "monthly_payment",
+    customPurpose: "",
   });
   const [dateFilter, setDateFilter] = useState({ startDate: "", endDate: "" });
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
@@ -147,6 +327,17 @@ function App() {
   const [printGradeId, setPrintGradeId] = useState("");
   const [printDateRange, setPrintDateRange] = useState({ startDate: "", endDate: "" });
   const [tickets, setTickets] = useState([]);
+  const [selectedPrintStudentIds, setSelectedPrintStudentIds] = useState([]);
+  const [adminPasswordInput, setAdminPasswordInput] = useState("");
+  const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
+  const [adminMessage, setAdminMessage] = useState("");
+  const [deleteAllPasswords, setDeleteAllPasswords] = useState({ first: "", second: "" });
+
+  const gradeLevels = useMemo(() => makeGradeLevels(feeSettings), [feeSettings]);
+  const getGradeById = useCallback(
+    (id) => feeSettings.find((g) => g.id === id),
+    [feeSettings],
+  );
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -170,27 +361,24 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!isAppUnlocked) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
-  }, [loadData]);
+  }, [isAppUnlocked, loadData]);
 
   const sortedStudents = useMemo(
     () => [...students].sort((a, b) => a.studentName.localeCompare(b.studentName)),
     [students],
   );
 
-  useEffect(() => {
-    if (!selectedStudentId && sortedStudents.length > 0) {
-      setSelectedStudentId(sortedStudents[0].studentId);
-    }
-  }, [selectedStudentId, sortedStudents]);
-
-  const selectedStudent = sortedStudents.find((s) => s.studentId === selectedStudentId);
+  const effectiveSelectedStudentId = selectedStudentId || sortedStudents[0]?.studentId || "";
+  const selectedStudent = sortedStudents.find((s) => s.studentId === effectiveSelectedStudentId);
 
   const selectedStudentLedger = useMemo(() => {
     return recomputeRunningBalances(
-      ledgerTransactions.filter((tx) => tx.studentId === selectedStudentId),
+      ledgerTransactions.filter((tx) => tx.studentId === effectiveSelectedStudentId),
     );
-  }, [ledgerTransactions, selectedStudentId]);
+  }, [effectiveSelectedStudentId, ledgerTransactions]);
 
   const filteredStudents = useMemo(() => {
     const key = searchTerm.trim().toLowerCase();
@@ -217,7 +405,10 @@ function App() {
     });
   }, [dateFilter.endDate, dateFilter.startDate, ledgerTransactions]);
 
-  const purposePreview = resolvePurposeLabel(txForm.purposeKey, txForm.date);
+  const purposePreview =
+    txForm.purposeKey === "other"
+      ? txForm.customPurpose.trim() || "Custom purpose"
+      : resolvePurposeLabel(txForm.purposeKey, txForm.date);
 
   const runSave = async (label, fn) => {
     setIsSaving(true);
@@ -230,6 +421,31 @@ function App() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleLogin = (event) => {
+    event.preventDefault();
+    if (!ADMIN_PASSWORD) {
+      setLoginMessage("Missing VITE_ADMIN_PASSWORD. Add it to .env.local and restart the app.");
+      return;
+    }
+    if (loginPasswordInput === ADMIN_PASSWORD) {
+      sessionStorage.setItem(AUTH_SESSION_KEY, "true");
+      setIsAppUnlocked(true);
+      setLoginPasswordInput("");
+      setLoginMessage("");
+      return;
+    }
+    setLoginMessage("Incorrect password.");
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem(AUTH_SESSION_KEY);
+    setIsAppUnlocked(false);
+    setIsAdminUnlocked(false);
+    setAdminPasswordInput("");
+    setLoginPasswordInput("");
+    setLoginMessage("");
   };
 
   const handleEnrollStudent = (event) => {
@@ -253,14 +469,18 @@ function App() {
 
   const handleAddTransaction = (event) => {
     event.preventDefault();
-    if (!selectedStudentId || !txForm.amount || Number(txForm.amount) <= 0) return;
-    if (!PURPOSE_KEYS[txForm.purposeKey]) return;
+    if (!effectiveSelectedStudentId || !txForm.amount || Number(txForm.amount) <= 0) return;
+    if (txForm.purposeKey !== "other" && !PURPOSE_KEYS[txForm.purposeKey]) return;
+    if (txForm.purposeKey === "other" && !txForm.customPurpose.trim()) return;
 
-    const purpose = resolvePurposeLabel(txForm.purposeKey, txForm.date);
+    const purpose =
+      txForm.purposeKey === "other"
+        ? txForm.customPurpose.trim()
+        : resolvePurposeLabel(txForm.purposeKey, txForm.date);
 
     runSave("Posting entry to cloud…", async () => {
       await insertSoaRow({
-        studentId: selectedStudentId,
+        studentId: effectiveSelectedStudentId,
         date: txForm.date,
         description: buildDescription(purpose, txForm.orNumber),
         amount: Number(txForm.amount),
@@ -268,7 +488,7 @@ function App() {
         orNumber: txForm.orNumber.trim(),
         purposeKey: txForm.purposeKey,
       });
-      setTxForm((old) => ({ ...old, amount: "", orNumber: "", date: today() }));
+      setTxForm((old) => ({ ...old, amount: "", orNumber: "", customPurpose: "", date: today() }));
     });
   };
 
@@ -291,6 +511,100 @@ function App() {
     runSave("Deleting entry from cloud…", async () => {
       await deleteSoaRow(tx.transactionId);
     });
+  };
+
+  const handleAdminUnlock = (event) => {
+    event.preventDefault();
+    if (!ADMIN_PASSWORD) {
+      setAdminMessage("Missing VITE_ADMIN_PASSWORD. Add it to .env.local and restart the app.");
+      return;
+    }
+    if (adminPasswordInput === ADMIN_PASSWORD) {
+      setIsAdminUnlocked(true);
+      setAdminPasswordInput("");
+      setAdminMessage("Admin access unlocked.");
+    } else {
+      setAdminMessage("Incorrect password.");
+    }
+  };
+
+  const updateFeeSetting = (gradeId, field, value) => {
+    const nextAmount = Math.max(0, Number(value) || 0);
+    setFeeSettings((old) =>
+      old.map((grade) =>
+        grade.id === gradeId ? normalizeGrade({ ...grade, [field]: nextAmount }) : grade,
+      ),
+    );
+  };
+
+  const saveFeeSettings = () => {
+    localStorage.setItem(FEE_SETTINGS_KEY, JSON.stringify(feeSettings));
+    setAdminMessage("Prices saved. New enrollments will use these amounts.");
+  };
+
+  const resetFeeSettings = () => {
+    const defaults = DEFAULT_GRADE_LEVELS.map(normalizeGrade);
+    setFeeSettings(defaults);
+    localStorage.setItem(FEE_SETTINGS_KEY, JSON.stringify(defaults));
+    setAdminMessage("Prices reset to defaults for future enrollments.");
+  };
+
+  const handleDeleteAllStudents = () => {
+    if (
+      deleteAllPasswords.first !== ADMIN_PASSWORD ||
+      deleteAllPasswords.second !== ADMIN_PASSWORD
+    ) {
+      setAdminMessage("Enter the admin password in both delete confirmation fields.");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        "Delete ALL students and ALL ledger transactions? This cannot be undone.",
+      )
+    ) {
+      return;
+    }
+
+    runSave("Deleting all students and ledger entries from cloud…", async () => {
+      await deleteAllStudents();
+      setSelectedStudentId("");
+      setSelectedPrintStudentIds([]);
+      setDeleteAllPasswords({ first: "", second: "" });
+    });
+    setAdminMessage("Delete request sent.");
+  };
+
+  const togglePrintStudent = (studentId) => {
+    setSelectedPrintStudentIds((old) =>
+      old.includes(studentId) ? old.filter((id) => id !== studentId) : [...old, studentId],
+    );
+  };
+
+  const printSelectedStudents = () => {
+    const selectedIds = new Set(selectedPrintStudentIds);
+    const allTickets = [];
+
+    sortedStudents
+      .filter((student) => selectedIds.has(student.studentId))
+      .forEach((student) => {
+        const ledger = recomputeRunningBalances(
+          ledgerTransactions.filter((tx) => tx.studentId === student.studentId),
+        );
+        if (ledger.length === 0) return;
+        allTickets.push({
+          studentId: student.studentId,
+          billTo: student.studentName,
+          studentName: student.studentName,
+          ledger,
+          amountDue: ledger.at(-1)?.runningBalance ?? 0,
+        });
+      });
+
+    if (allTickets.length === 0) return;
+    setBillToPrinted("");
+    setTickets(allTickets);
+    setTimeout(() => window.print(), 10);
   };
 
   const openPrintModal = ({ mode = "single", gradeId = "", dateRange = null, billTo = "" } = {}) => {
@@ -367,6 +681,39 @@ function App() {
 
   const getGradeName = (id) => getGradeById(id)?.name ?? "—";
 
+  if (!isAppUnlocked) {
+    return (
+      <div className="mx-auto flex min-h-screen max-w-md items-center p-6">
+        <div className="w-full rounded-xl border border-slate-300 bg-white p-6 shadow-sm">
+          <h1 className="text-2xl font-bold text-slate-900">
+            Palawan Jewels Learning Center
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">Enter the system password to continue.</p>
+          <form className="mt-5 space-y-4" onSubmit={handleLogin}>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-slate-700">Password</span>
+              <input
+                type="password"
+                autoFocus
+                className="rounded-md border border-slate-300 px-3 py-2"
+                value={loginPasswordInput}
+                onChange={(e) => setLoginPasswordInput(e.target.value)}
+                required
+              />
+            </label>
+            {loginMessage && <p className="text-sm text-rose-700">{loginMessage}</p>}
+            <button
+              type="submit"
+              className="w-full rounded-md bg-slate-900 px-4 py-2 font-semibold text-white hover:bg-slate-700"
+            >
+              Login
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-7xl p-6">
       <div className="no-print rounded-xl border border-slate-300 bg-white p-5 shadow-sm">
@@ -397,6 +744,7 @@ function App() {
             { id: "enroll", label: "Enroll Student" },
             { id: "ledger", label: "Ledger & Transactions" },
             { id: "manage", label: "Reports & Print" },
+            { id: "admin", label: "Admin" },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -419,6 +767,13 @@ function App() {
             className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-300"
           >
             Refresh
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"
+          >
+            Logout
           </button>
         </div>
 
@@ -484,7 +839,7 @@ function App() {
               <div className="mt-3">
                 <StudentsTable
                   students={filteredStudents}
-                  selectedStudentId={selectedStudentId}
+                  selectedStudentId={effectiveSelectedStudentId}
                   onSelect={setSelectedStudentId}
                   balanceMap={studentBalanceMap}
                   getGradeName={getGradeName}
@@ -582,12 +937,25 @@ function App() {
                         {purposeOptionLabel(key, txForm.date)}
                       </option>
                     ))}
+                    <option value="other">Other</option>
                   </select>
+                  {txForm.purposeKey === "other" && (
+                    <input
+                      className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      placeholder="Custom purpose"
+                      value={txForm.customPurpose}
+                      onChange={(e) =>
+                        setTxForm((old) => ({ ...old, customPurpose: e.target.value }))
+                      }
+                      required
+                      disabled={isSaving}
+                    />
+                  )}
                 </label>
                 <div className="flex items-end">
                   <button
                     type="submit"
-                    disabled={!selectedStudentId || isSaving || isLoading}
+                    disabled={!effectiveSelectedStudentId || isSaving || isLoading}
                     className="w-full rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
                   >
                     Post entry
@@ -661,18 +1029,109 @@ function App() {
         {activeTab === "manage" && (
           <section className="mt-6 space-y-6">
             <div className="rounded-lg border border-slate-200 p-4">
-              <h2 className="text-lg font-semibold">All Students</h2>
-              <StudentsTable
-                students={sortedStudents}
-                selectedStudentId={selectedStudentId}
-                onSelect={(id) => {
-                  setSelectedStudentId(id);
-                  setActiveTab("ledger");
-                }}
-                balanceMap={studentBalanceMap}
-                getGradeName={getGradeName}
-                maxHeight="max-h-[28rem]"
-              />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold">All Students</h2>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedPrintStudentIds(sortedStudents.map((s) => s.studentId))
+                    }
+                    disabled={sortedStudents.length === 0}
+                    className="rounded-md bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50"
+                  >
+                    Check All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPrintStudentIds([])}
+                    disabled={sortedStudents.length === 0}
+                    className="rounded-md bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50"
+                  >
+                    Uncheck All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={printSelectedStudents}
+                    disabled={selectedPrintStudentIds.length === 0 || isLoading}
+                    className="rounded-md bg-indigo-700 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-800 disabled:opacity-50"
+                  >
+                    Print Selected
+                  </button>
+                </div>
+              </div>
+              <p className="mt-1 text-sm text-slate-600">
+                Checked students will each receive an SOA copy.
+              </p>
+              <div className="mt-3 max-h-[28rem] overflow-auto rounded-md border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="sticky top-0 z-10 bg-slate-100 shadow-sm">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-semibold">Print</th>
+                      <th className="px-3 py-2 text-left font-semibold">Student name</th>
+                      <th className="px-3 py-2 text-left font-semibold">Grade</th>
+                      <th className="px-3 py-2 text-right font-semibold">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedStudents.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                          No students found
+                        </td>
+                      </tr>
+                    ) : (
+                      sortedStudents.map((student) => (
+                        <tr key={student.studentId} className="border-t border-slate-200">
+                          <td className="px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedPrintStudentIds.includes(student.studentId)}
+                              onChange={() => togglePrintStudent(student.studentId)}
+                              className="h-4 w-4"
+                            />
+                          </td>
+                          <td className="px-3 py-2 font-medium">{student.studentName}</td>
+                          <td className="px-3 py-2 text-slate-600">
+                            {getGradeName(student.gradeLevelId)}
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold text-rose-700">
+                            {currency(studentBalanceMap[student.studentId])}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Full Backup Export</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Exports students, transactions, balances, and the current fee matrix in one
+                    Excel file.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadWorkbook({
+                      students: sortedStudents,
+                      ledgerTransactions: recomputeRunningBalances(ledgerTransactions),
+                      gradeLevels,
+                      balanceMap: studentBalanceMap,
+                      getGradeName,
+                    })
+                  }
+                  disabled={isLoading}
+                  className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
+                >
+                  Export Full Backup
+                </button>
+              </div>
             </div>
 
             <div className="rounded-lg border border-slate-200 p-4">
@@ -801,6 +1260,152 @@ function App() {
                 </table>
               </div>
             </div>
+          </section>
+        )}
+
+        {activeTab === "admin" && (
+          <section className="mt-6 space-y-6">
+            <div className="rounded-lg border border-slate-200 p-4">
+              <h2 className="text-lg font-semibold">Admin Access</h2>
+              {!isAdminUnlocked ? (
+                <form className="mt-4 flex max-w-lg flex-wrap gap-3" onSubmit={handleAdminUnlock}>
+                  <input
+                    type="password"
+                    className="min-w-64 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    placeholder="Admin password"
+                    value={adminPasswordInput}
+                    onChange={(e) => setAdminPasswordInput(e.target.value)}
+                  />
+                  <button
+                    type="submit"
+                    className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+                  >
+                    Unlock Admin
+                  </button>
+                </form>
+              ) : (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="rounded-md bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">
+                    Admin unlocked
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAdminUnlocked(false);
+                      setAdminMessage("Admin access locked.");
+                    }}
+                    className="rounded-md bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-300"
+                  >
+                    Lock
+                  </button>
+                </div>
+              )}
+              {adminMessage && <p className="mt-3 text-sm text-slate-700">{adminMessage}</p>}
+            </div>
+
+            {isAdminUnlocked && (
+              <>
+                <div className="rounded-lg border border-slate-200 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-semibold">Future Enrollment Prices</h2>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Price changes apply only to students enrolled after saving. Existing ledger
+                        values are unchanged.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={resetFeeSettings}
+                        className="rounded-md bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-300"
+                      >
+                        Reset Defaults
+                      </button>
+                      <button
+                        type="button"
+                        onClick={saveFeeSettings}
+                        className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
+                      >
+                        Save Prices
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-4 overflow-auto rounded-md border border-slate-200">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-slate-100">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Grade</th>
+                          <th className="px-3 py-2 text-right">General Fees</th>
+                          <th className="px-3 py-2 text-right">Tuition</th>
+                          <th className="px-3 py-2 text-right">Books</th>
+                          <th className="px-3 py-2 text-right">Grand Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {feeSettings.map((grade) => (
+                          <tr key={grade.id} className="border-t border-slate-200">
+                            <td className="px-3 py-2 font-medium">{grade.name}</td>
+                            {["generalFees", "tuition", "books"].map((field) => (
+                              <td key={field} className="px-3 py-2 text-right">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={grade[field]}
+                                  onChange={(e) =>
+                                    updateFeeSetting(grade.id, field, e.target.value)
+                                  }
+                                  className="w-32 rounded-md border border-slate-300 px-2 py-1 text-right"
+                                />
+                              </td>
+                            ))}
+                            <td className="px-3 py-2 text-right font-semibold">
+                              {currency(grade.grandTotal)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
+                  <h2 className="text-lg font-semibold text-rose-900">Delete All Students</h2>
+                  <p className="mt-1 text-sm text-rose-800">
+                    This deletes every student and every ledger transaction from Supabase.
+                  </p>
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    <input
+                      type="password"
+                      className="rounded-md border border-rose-300 px-3 py-2 text-sm"
+                      placeholder="Admin password"
+                      value={deleteAllPasswords.first}
+                      onChange={(e) =>
+                        setDeleteAllPasswords((old) => ({ ...old, first: e.target.value }))
+                      }
+                    />
+                    <input
+                      type="password"
+                      className="rounded-md border border-rose-300 px-3 py-2 text-sm"
+                      placeholder="Re-enter admin password"
+                      value={deleteAllPasswords.second}
+                      onChange={(e) =>
+                        setDeleteAllPasswords((old) => ({ ...old, second: e.target.value }))
+                      }
+                    />
+                    <button
+                      type="button"
+                      onClick={handleDeleteAllStudents}
+                      disabled={isSaving || isLoading}
+                      className="rounded-md bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800 disabled:opacity-50"
+                    >
+                      Delete All Students
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </section>
         )}
       </div>
