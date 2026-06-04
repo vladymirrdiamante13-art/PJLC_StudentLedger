@@ -216,6 +216,32 @@ export async function archiveSchoolYearAndStartNew({ schoolYearId, archiveLabel 
   return mapSchoolYear(data);
 }
 
+export async function deleteArchivedSchoolYear(schoolYearId) {
+  const years = await fetchSchoolYears();
+  const targetYear = years.find((year) => year.schoolYearId === schoolYearId);
+  if (!targetYear) {
+    throw new Error("School year archive not found.");
+  }
+  if (targetYear.isCurrent) {
+    throw new Error("The current school year cannot be deleted.");
+  }
+
+  const { error: rowError } = await supabase
+    .from("soa_rows")
+    .delete()
+    .eq("school_year_id", schoolYearId);
+  if (rowError) throw rowError;
+
+  const { error: studentError } = await supabase
+    .from("students")
+    .delete()
+    .eq("school_year_id", schoolYearId);
+  if (studentError) throw studentError;
+
+  const { error } = await supabase.from("school_years").delete().eq("id", schoolYearId);
+  if (error) throw error;
+}
+
 export async function deleteSoaRow(transactionId) {
   const { error } = await supabase.from("soa_rows").delete().eq("id", transactionId);
   if (error) throw error;

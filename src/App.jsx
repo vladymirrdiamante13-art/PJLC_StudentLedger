@@ -16,6 +16,7 @@ import {
   deleteStudent,
   deleteSoaRow,
   archiveSchoolYearAndStartNew,
+  deleteArchivedSchoolYear,
   formatSchoolYearLabel,
   normalizeSchoolYearLabel,
   buildDescription,
@@ -347,6 +348,11 @@ function App() {
     firstPassword: "",
     secondPassword: "",
   });
+  const [deleteArchiveForm, setDeleteArchiveForm] = useState({
+    schoolYearId: "",
+    firstPassword: "",
+    secondPassword: "",
+  });
 
   const gradeLevels = useMemo(() => makeGradeLevels(feeSettings), [feeSettings]);
   const getGradeById = useCallback(
@@ -357,6 +363,10 @@ function App() {
   const activeSchoolYear = useMemo(
     () => schoolYears.find((year) => year.schoolYearId === activeSchoolYearId) ?? schoolYears[0],
     [activeSchoolYearId, schoolYears],
+  );
+  const archivedSchoolYears = useMemo(
+    () => schoolYears.filter((year) => !year.isCurrent),
+    [schoolYears],
   );
 
   const loadData = useCallback(async (targetSchoolYearId = activeSchoolYearId) => {
@@ -659,6 +669,49 @@ function App() {
       return nextYear.schoolYearId;
     });
     setAdminMessage("Archive request sent.");
+  };
+
+  const handleDeleteSchoolYearArchive = () => {
+    if (
+      deleteArchiveForm.firstPassword !== ADMIN_PASSWORD ||
+      deleteArchiveForm.secondPassword !== ADMIN_PASSWORD
+    ) {
+      setAdminMessage("Enter the admin password in both archive delete confirmation fields.");
+      return;
+    }
+
+    const targetYear = archivedSchoolYears.find(
+      (year) => year.schoolYearId === deleteArchiveForm.schoolYearId,
+    );
+    if (!targetYear) {
+      setAdminMessage("Select a past school year archive to delete.");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete ${targetYear.label} and all of its students and SOA records? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
+    runSave(`Deleting ${targetYear.label} archive…`, async () => {
+      await deleteArchivedSchoolYear(targetYear.schoolYearId);
+      setDeleteArchiveForm({ schoolYearId: "", firstPassword: "", secondPassword: "" });
+      if (activeSchoolYearId === targetYear.schoolYearId) {
+        const currentYear = schoolYears.find((year) => year.isCurrent);
+        if (currentYear) {
+          sessionStorage.setItem(SCHOOL_YEAR_SESSION_KEY, currentYear.schoolYearId);
+          setActiveSchoolYearId(currentYear.schoolYearId);
+          setSelectedStudentId("");
+          setSelectedPrintStudentIds([]);
+          return currentYear.schoolYearId;
+        }
+      }
+      return activeSchoolYearId;
+    });
+    setAdminMessage("Archive delete request sent.");
   };
 
   const togglePrintStudent = (studentId) => {
@@ -1542,6 +1595,81 @@ function App() {
                       S.Y {archiveForm.startYear || "____"} to {archiveForm.endYear || "____"}
                     </span>
                   </p>
+                </div>
+
+                <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
+                  <h2 className="text-lg font-semibold text-rose-900">
+                    Delete School Year Archive
+                  </h2>
+                  <p className="mt-1 text-sm text-rose-800">
+                    Permanently deletes a past school year, including its students and SOA records.
+                    The current school year cannot be selected.
+                  </p>
+                  <div className="mt-4 grid gap-3 md:grid-cols-4">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs font-medium text-rose-900">Past school year</span>
+                      <select
+                        className="rounded-md border border-rose-300 px-3 py-2 text-sm"
+                        value={deleteArchiveForm.schoolYearId}
+                        onChange={(e) =>
+                          setDeleteArchiveForm((old) => ({
+                            ...old,
+                            schoolYearId: e.target.value,
+                          }))
+                        }
+                        disabled={archivedSchoolYears.length === 0 || isSaving}
+                      >
+                        <option value="">Select archive</option>
+                        {archivedSchoolYears.map((year) => (
+                          <option key={year.schoolYearId} value={year.schoolYearId}>
+                            {year.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <input
+                      type="password"
+                      className="rounded-md border border-rose-300 px-3 py-2 text-sm"
+                      placeholder="Admin password"
+                      value={deleteArchiveForm.firstPassword}
+                      onChange={(e) =>
+                        setDeleteArchiveForm((old) => ({
+                          ...old,
+                          firstPassword: e.target.value,
+                        }))
+                      }
+                    />
+                    <input
+                      type="password"
+                      className="rounded-md border border-rose-300 px-3 py-2 text-sm"
+                      placeholder="Re-enter admin password"
+                      value={deleteArchiveForm.secondPassword}
+                      onChange={(e) =>
+                        setDeleteArchiveForm((old) => ({
+                          ...old,
+                          secondPassword: e.target.value,
+                        }))
+                      }
+                    />
+                    <button
+                      type="button"
+                      onClick={handleDeleteSchoolYearArchive}
+                      disabled={
+                        isSaving ||
+                        isLoading ||
+                        archivedSchoolYears.length === 0 ||
+                        !deleteArchiveForm.schoolYearId
+                      }
+                      className="rounded-md bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800 disabled:opacity-50"
+                    >
+                      Delete Archive
+                    </button>
+                  </div>
+                  {archivedSchoolYears.length === 0 && (
+                    <p className="mt-2 text-xs text-rose-800">
+                      No past school year archives are available to delete.
+                    </p>
+                  )}
                 </div>
               </>
             )}
