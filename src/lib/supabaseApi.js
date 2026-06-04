@@ -9,6 +9,10 @@ export function formatSchoolYearLabel(startYear, endYear) {
   return `S.Y ${start} to ${end}`;
 }
 
+export function normalizeSchoolYearLabel(label) {
+  return String(label ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 export function mapSchoolYear(row) {
   return {
     schoolYearId: row.id,
@@ -176,6 +180,17 @@ export async function deleteStudent(studentId) {
 }
 
 export async function archiveSchoolYearAndStartNew({ schoolYearId, archiveLabel }) {
+  const normalizedArchiveLabel = normalizeSchoolYearLabel(archiveLabel);
+  const years = await fetchSchoolYears();
+  const duplicateYear = years.find(
+    (year) =>
+      year.schoolYearId !== schoolYearId &&
+      normalizeSchoolYearLabel(year.label) === normalizedArchiveLabel,
+  );
+  if (duplicateYear) {
+    throw new Error(`${archiveLabel} already exists. Choose a different school year.`);
+  }
+
   const archivedAt = new Date().toISOString();
   const { error: archiveError } = await supabase
     .from("school_years")

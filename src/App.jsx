@@ -17,6 +17,7 @@ import {
   deleteSoaRow,
   archiveSchoolYearAndStartNew,
   formatSchoolYearLabel,
+  normalizeSchoolYearLabel,
   buildDescription,
   baselinePayloads,
 } from "./lib/supabaseApi";
@@ -627,6 +628,15 @@ function App() {
     }
 
     const archiveLabel = formatSchoolYearLabel(startYear, endYear);
+    const duplicateYear = schoolYears.find(
+      (year) =>
+        year.schoolYearId !== activeSchoolYear.schoolYearId &&
+        normalizeSchoolYearLabel(year.label) === normalizeSchoolYearLabel(archiveLabel),
+    );
+    if (duplicateYear) {
+      setAdminMessage(`${archiveLabel} already exists. Enter a different school year.`);
+      return;
+    }
 
     if (
       !window.confirm(
