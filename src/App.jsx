@@ -8,6 +8,7 @@ import {
 } from "./lib/purposes";
 import {
   fetchStudents,
+  fetchAllStudents,
   fetchSoaRows,
   ensureCurrentSchoolYear,
   insertStudent,
@@ -47,6 +48,9 @@ const currency = (value) =>
 
 const transactionAmountDisplay = (tx) =>
   tx.hideAmount ? "" : currency(Math.abs(tx.signedAmount ?? tx.amount));
+
+const hasZeroBalance = (value) => Math.abs(Number(value) || 0) < 0.005;
+const hasOutstandingBalance = (value) => !hasZeroBalance(value);
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -311,6 +315,7 @@ function App() {
     return DEFAULT_GRADE_LEVELS.map(normalizeGrade);
   });
   const [students, setStudents] = useState([]);
+  const [allSchoolYearStudents, setAllSchoolYearStudents] = useState([]);
   const [ledgerTransactions, setLedgerTransactions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -382,14 +387,16 @@ function App() {
         targetSchoolYearId && years.some((year) => year.schoolYearId === targetSchoolYearId)
           ? targetSchoolYearId
           : current.schoolYearId;
-      const [studentRows, soaRows] = await Promise.all([
+      const [studentRows, soaRows, allStudentRows] = await Promise.all([
         fetchStudents(selectedYearId),
         fetchSoaRows(selectedYearId),
+        fetchAllStudents(),
       ]);
       setSchoolYears(years);
       setActiveSchoolYearId(selectedYearId);
       sessionStorage.setItem(SCHOOL_YEAR_SESSION_KEY, selectedYearId);
       setStudents(studentRows);
+      setAllSchoolYearStudents(allStudentRows);
       setLedgerTransactions(soaRows);
       setCloudMessage("Synced with Supabase.");
     } catch (err) {
@@ -447,6 +454,28 @@ function App() {
     return map;
   }, [ledgerTransactions, students]);
 
+  const totalReceivables = useMemo(
+    () => students.reduce((sum, student) => sum + (studentBalanceMap[student.studentId] || 0), 0),
+    [studentBalanceMap, students],
+  );
+
+  const enrollmentSuggestions = useMemo(() => {
+    const key = studentForm.studentName.trim().toLowerCase();
+    if (key.length < 1) return [];
+
+    const seen = new Set();
+    return allSchoolYearStudents
+      .filter((student) => student.studentName.toLowerCase().startsWith(key))
+      .sort((a, b) => a.studentName.localeCompare(b.studentName))
+      .filter((student) => {
+        const dedupeKey = `${student.studentName.toLowerCase()}-${student.gradeLevelId}`;
+        if (seen.has(dedupeKey)) return false;
+        seen.add(dedupeKey);
+        return true;
+      })
+      .slice(0, 8);
+  }, [allSchoolYearStudents, studentForm.studentName]);
+
   const systemTransactionsByDate = useMemo(() => {
     return recomputeRunningBalances(ledgerTransactions).filter((tx) => {
       const passStart = !dateFilter.startDate || tx.date >= dateFilter.startDate;
@@ -478,6 +507,13 @@ function App() {
     setActiveSchoolYearId(schoolYearId);
     setSelectedStudentId("");
     setSelectedPrintStudentIds([]);
+  };
+
+  const handleEnrollmentSuggestionSelect = (student) => {
+    setStudentForm({
+      studentName: student.studentName,
+      gradeLevelId: student.gradeLevelId,
+    });
   };
 
   const handleLogin = (event) => {
@@ -783,7 +819,11 @@ function App() {
       const targetGradeId = printGradeId || selectedStudent?.gradeLevelId;
       if (targetGradeId) {
         sortedStudents
-          .filter((s) => s.gradeLevelId === targetGradeId)
+          .filter(
+            (s) =>
+              s.gradeLevelId === targetGradeId &&
+              hasOutstandingBalance(studentBalanceMap[s.studentId]),
+          )
           .forEach((student) => {
             const ledger = recomputeRunningBalances(
               ledgerTransactions.filter((tx) => tx.studentId === student.studentId),
@@ -954,6 +994,28 @@ function App() {
                   required
                   disabled={isSaving}
                 />
+                {enrollmentSuggestions.length > 0 && (
+                  <div className="max-h-44 overflow-auto rounded-md border border-slate-200 bg-white text-sm shadow-sm">
+                    {enrollmentSuggestions.map((student) => {
+                      const suggestionYear =
+                        schoolYears.find((year) => year.schoolYearId === student.schoolYearId)
+                          ?.label ?? "Past school year";
+                      return (
+                        <button
+                          key={`${student.studentId}-${student.schoolYearId}`}
+                          type="button"
+                          onClick={() => handleEnrollmentSuggestionSelect(student)}
+                          className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-3 py-2 text-left last:border-b-0 hover:bg-slate-50"
+                        >
+                          <span className="font-medium text-slate-900">{student.studentName}</span>
+                          <span className="shrink-0 text-xs text-slate-500">
+                            {getGradeName(student.gradeLevelId)} · {suggestionYear}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </label>
               <label className="flex flex-col gap-1">
                 <span className="text-sm font-medium text-slate-700">Grade Level</span>
@@ -988,7 +1050,12 @@ function App() {
         {activeTab === "ledger" && (
           <section className="mt-6 space-y-6">
             <div className="rounded-lg border border-slate-200 p-4">
-              <h2 className="text-lg font-semibold">All Students (A–Z)</h2>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <h2 className="text-lg font-semibold">All Students (A–Z)</h2>
+                <p className="text-sm font-semibold text-rose-700">
+                  Total receivables: {currency(totalReceivables)}
+                </p>
+              </div>
               <input
                 className="mt-3 w-full max-w-md rounded-md border border-slate-300 px-3 py-2 text-sm"
                 placeholder="Search by name..."
@@ -1191,7 +1258,12 @@ function App() {
           <section className="mt-6 space-y-6">
             <div className="rounded-lg border border-slate-200 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold">All Students</h2>
+                <div>
+                  <h2 className="text-lg font-semibold">All Students</h2>
+                  <p className="mt-1 text-sm font-semibold text-rose-700">
+                    Total receivables: {currency(totalReceivables)}
+                  </p>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -1303,7 +1375,7 @@ function App() {
                   <thead className="sticky top-0 bg-slate-100">
                     <tr>
                       <th className="px-3 py-2 text-left">Grade</th>
-                      <th className="px-3 py-2 text-right">Students</th>
+                      <th className="px-3 py-2 text-right">Students with balance</th>
                       <th className="px-3 py-2 text-right">Total receivable</th>
                       <th className="px-3 py-2 text-right">Action</th>
                     </tr>
@@ -1313,6 +1385,9 @@ function App() {
                       const studentsInGrade = sortedStudents.filter(
                         (s) => s.gradeLevelId === grade.gradeLevelId,
                       );
+                      const studentsWithBalance = studentsInGrade.filter((student) =>
+                        hasOutstandingBalance(studentBalanceMap[student.studentId]),
+                      );
                       const receivable = studentsInGrade.reduce(
                         (sum, s) => sum + (studentBalanceMap[s.studentId] || 0),
                         0,
@@ -1320,14 +1395,14 @@ function App() {
                       return (
                         <tr key={grade.gradeLevelId} className="border-t border-slate-200">
                           <td className="px-3 py-2 font-medium">{grade.gradeLevelName}</td>
-                          <td className="px-3 py-2 text-right">{studentsInGrade.length}</td>
+                          <td className="px-3 py-2 text-right">{studentsWithBalance.length}</td>
                           <td className="px-3 py-2 text-right font-semibold text-rose-700">
                             {currency(receivable)}
                           </td>
                           <td className="px-3 py-2 text-right">
                             <button
                               type="button"
-                              disabled={studentsInGrade.length === 0 || isLoading}
+                              disabled={studentsWithBalance.length === 0 || isLoading}
                               onClick={() =>
                                 openPrintModal({ mode: "grade", gradeId: grade.gradeLevelId })
                               }

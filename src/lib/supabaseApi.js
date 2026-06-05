@@ -106,6 +106,15 @@ export async function fetchStudents(schoolYearId) {
   return (data ?? []).map(mapStudent);
 }
 
+export async function fetchAllStudents() {
+  const { data, error } = await supabase
+    .from("students")
+    .select("student_id, school_year_id, student_name, grade_level_id")
+    .order("student_name");
+  if (error) throw error;
+  return (data ?? []).map(mapStudent);
+}
+
 export async function fetchSoaRows(schoolYearId) {
   const { data, error } = await supabase
     .from("soa_rows")
