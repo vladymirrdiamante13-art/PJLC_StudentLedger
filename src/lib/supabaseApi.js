@@ -13,6 +13,13 @@ export function normalizeSchoolYearLabel(label) {
   return String(label ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+function formatBaselineAmount(value) {
+  return Number(value || 0).toLocaleString("en-PH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 export function mapSchoolYear(row) {
   return {
     schoolYearId: row.id,
@@ -37,6 +44,8 @@ export function mapSoaRow(row) {
     purposeKey: row.purpose_key ?? meta.purpose_key ?? "general_fees",
     purpose: row.description ?? row.purpose ?? "",
     amount: Number(row.amount),
+    hideAmount: Boolean(meta.hide_amount ?? meta.hideAmount),
+    isInitialBaseline: Boolean(meta.is_initial_baseline ?? meta.isInitialBaseline),
     createdAt: row.created_at ?? new Date().toISOString(),
   };
 }
@@ -161,6 +170,7 @@ export async function insertSoaRowsBulk(rows) {
     or_number: r.orNumber ?? "",
     purpose_key: r.purposeKey ?? "",
     meta: {
+      ...(r.meta ?? {}),
       entry_type: r.type,
       or_number: r.orNumber ?? "",
       purpose_key: r.purposeKey ?? "",
@@ -250,21 +260,49 @@ export async function deleteSoaRow(transactionId) {
 /** Baseline fee rows for new enrollment. */
 export function baselinePayloads(studentId, grade, dateIso) {
   const items = [
-    { purposeKey: "general_fees", amount: grade.generalFees },
-    { purposeKey: "tuition", amount: grade.tuition },
-    { purposeKey: "books", amount: grade.books },
+    {
+      label: resolvePurposeLabel("general_fees", dateIso),
+      purposeKey: "general_fees",
+      amount: Number(grade.generalFees) || 0,
+    },
+    {
+      label: resolvePurposeLabel("tuition", dateIso),
+      purposeKey: "tuition",
+      amount: Number(grade.tuition) || 0,
+    },
+    {
+      label: resolvePurposeLabel("books", dateIso),
+      purposeKey: "books",
+      amount: Number(grade.books) || 0,
+    },
   ];
-  return items.map((item) => {
-    const purpose = resolvePurposeLabel(item.purposeKey, dateIso);
-    return {
+  const total = items.reduce((sum, item) => sum + item.amount, 0);
+  const purpose = [
+    ...items.map((item) => `${item.label} - ${formatBaselineAmount(item.amount)}`),
+    "",
+    `Total - ${formatBaselineAmount(total)}`,
+  ].join("\n");
+
+  return [
+    {
       studentId,
       date: dateIso,
       type: "DEBIT",
-      purposeKey: item.purposeKey,
+      purposeKey: "initial_fees",
       purpose,
       orNumber: "",
-      amount: item.amount,
-      description: buildDescription(purpose, ""),
-    };
-  });
+      amount: total,
+      description: purpose,
+      meta: {
+        hide_amount: true,
+        is_initial_baseline: true,
+        fee_breakdown: items.map((item) => ({
+          purpose_key: item.purposeKey,
+          label: item.label,
+          amount: item.amount,
+        })),
+        total,
+      },
+    },
+  ];
 }

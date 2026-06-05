@@ -14,6 +14,11 @@ function transactionLabel(tx) {
   return `${tx.purpose}${orPart}`;
 }
 
+function transactionAmount(tx) {
+  if (tx.isBalanceForward || tx.hideAmount) return "";
+  return fmt(Math.abs(tx.signedAmount ?? tx.amount));
+}
+
 function HalfPage({
   billTo,
   statementDate,
@@ -80,9 +85,11 @@ function HalfPage({
                 <td className="border border-black px-1 py-0.5 align-top">
                   {tx.isBalanceForward ? "" : formatDisplayDate(tx.date)}
                 </td>
-                <td className="border border-black px-1 py-0.5 align-top">{transactionLabel(tx)}</td>
+                <td className="whitespace-pre-line border border-black px-1 py-0.5 align-top">
+                  {transactionLabel(tx)}
+                </td>
                 <td className="border border-black px-1 py-0.5 text-right align-top">
-                  {tx.isBalanceForward ? "" : fmt(Math.abs(tx.signedAmount ?? tx.amount))}
+                  {transactionAmount(tx)}
                 </td>
                 <td className="border border-black px-1 py-0.5 text-right align-top">
                   {fmt(tx.runningBalance)}

@@ -45,6 +45,9 @@ const currency = (value) =>
     Number(value || 0),
   );
 
+const transactionAmountDisplay = (tx) =>
+  tx.hideAmount ? "" : currency(Math.abs(tx.signedAmount ?? tx.amount));
+
 const today = () => new Date().toISOString().slice(0, 10);
 
 const normalizeGrade = (grade) => {
@@ -114,7 +117,7 @@ const downloadWorkbook = ({
       tx.orNumber,
       tx.type,
       tx.purpose,
-      tx.amount,
+      tx.hideAmount ? "" : tx.amount,
       tx.signedAmount ?? "",
       tx.runningBalance ?? "",
       tx.createdAt,
@@ -1158,7 +1161,9 @@ function App() {
                           <td className="px-3 py-2">{tx.orNumber || "—"}</td>
                           <td className="px-3 py-2">{tx.type}</td>
                           <td className="px-3 py-2 whitespace-pre-line">{tx.purpose}</td>
-                          <td className="px-3 py-2 text-right">{currency(tx.amount)}</td>
+                          <td className="px-3 py-2 text-right">
+                            {transactionAmountDisplay(tx)}
+                          </td>
                           <td className="px-3 py-2 text-right font-semibold">
                             {currency(tx.runningBalance)}
                           </td>
@@ -1408,7 +1413,7 @@ function App() {
                           <td className="px-3 py-2">{tx.orNumber || "—"}</td>
                           <td className="px-3 py-2 whitespace-pre-line">{tx.purpose}</td>
                           <td className="px-3 py-2 text-right">
-                            {currency(Math.abs(tx.signedAmount))}
+                            {transactionAmountDisplay(tx)}
                           </td>
                         </tr>
                       ))
