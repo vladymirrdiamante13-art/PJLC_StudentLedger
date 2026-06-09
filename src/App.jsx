@@ -562,6 +562,7 @@ function App() {
     amount: "",
     purposeKey: "monthly_payment",
     customPurpose: "",
+    customMonth: "",
   });
   const [dateFilter, setDateFilter] = useState({ startDate: "", endDate: "" });
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
@@ -755,6 +756,8 @@ function App() {
   const purposePreview =
     txForm.purposeKey === "other"
       ? txForm.customPurpose.trim() || "Custom purpose"
+      : txForm.purposeKey === "monthly_payment"
+        ? `Payment for the month of ${txForm.customMonth.trim() || "[month]"}`
       : resolvePurposeLabel(txForm.purposeKey, txForm.date);
 
   const runSave = async (label, fn) => {
@@ -852,10 +855,11 @@ function App() {
     if (txForm.purposeKey !== "other" && !PURPOSE_KEYS[txForm.purposeKey])
       return;
     if (txForm.purposeKey === "other" && !txForm.customPurpose.trim()) return;
-
     const purpose =
       txForm.purposeKey === "other"
         ? txForm.customPurpose.trim()
+        : txForm.purposeKey === "monthly_payment"
+          ? `Payment for the month of ${txForm.customMonth.trim() || "[month]"}`
         : resolvePurposeLabel(txForm.purposeKey, txForm.date);
 
     runSave("Posting entry to cloud…", async () => {
@@ -874,6 +878,7 @@ function App() {
         amount: "",
         orNumber: "",
         customPurpose: "",
+        customMonth: "",
         date: today(),
       }));
     });
@@ -1588,11 +1593,28 @@ function App() {
                   >
                     {Object.keys(PURPOSE_KEYS).map((key) => (
                       <option key={key} value={key}>
-                        {purposeOptionLabel(key, txForm.date)}
+                        {key === "monthly_payment"
+                          ? "Payment for the month of [month]"
+                          : purposeOptionLabel(key, txForm.date)}
                       </option>
                     ))}
                     <option value="other">Other</option>
                   </select>
+                  {txForm.purposeKey === "monthly_payment" && (
+                    <input
+                      className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      placeholder="Month, e.g. June"
+                      value={txForm.customMonth}
+                      onChange={(e) =>
+                        setTxForm((old) => ({
+                          ...old,
+                          customMonth: e.target.value,
+                        }))
+                      }
+                      required
+                      disabled={isSaving}
+                    />
+                  )}
                   {txForm.purposeKey === "other" && (
                     <input
                       className="rounded-md border border-slate-300 px-3 py-2 text-sm"
