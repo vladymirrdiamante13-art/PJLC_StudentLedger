@@ -277,6 +277,17 @@ export async function deleteSoaRow(transactionId) {
   if (error) throw error;
 }
 
+export async function updateSoaRowDate(transactionId, date) {
+  const { data, error } = await supabase
+    .from("soa_rows")
+    .update({ date })
+    .eq("id", transactionId)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return mapSoaRow(data);
+}
+
 /** Baseline fee rows for new enrollment. */
 export function baselinePayloads(studentId, grade, dateIso) {
   const items = [

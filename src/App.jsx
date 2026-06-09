@@ -17,6 +17,7 @@ import {
   insertSoaRowsBulk,
   deleteStudent,
   deleteSoaRow,
+  updateSoaRowDate,
   archiveSchoolYearAndStartNew,
   deleteArchivedSchoolYear,
   formatSchoolYearLabel,
@@ -552,6 +553,8 @@ function App() {
   });
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStudentId, setSelectedStudentId] = useState("");
+  const [editingTransactionId, setEditingTransactionId] = useState("");
+  const [editingTransactionDate, setEditingTransactionDate] = useState("");
   const [txForm, setTxForm] = useState({
     date: today(),
     orNumber: "",
@@ -903,6 +906,28 @@ function App() {
     if (!window.confirm("Delete this ledger entry?")) return;
     runSave("Deleting entry from cloud…", async () => {
       await deleteSoaRow(tx.transactionId);
+    });
+  };
+
+  const startEditingTransactionDate = (tx) => {
+    setEditingTransactionId(tx.transactionId);
+    setEditingTransactionDate(tx.date);
+  };
+
+  const cancelEditingTransactionDate = () => {
+    setEditingTransactionId("");
+    setEditingTransactionDate("");
+  };
+
+  const saveEditingTransactionDate = (tx) => {
+    const nextDate = editingTransactionDate.trim();
+    if (!nextDate || nextDate === tx.date) {
+      cancelEditingTransactionDate();
+      return;
+    }
+    runSave("Updating transaction date…", async () => {
+      await updateSoaRowDate(tx.transactionId, nextDate);
+      cancelEditingTransactionDate();
     });
   };
 
@@ -1642,7 +1667,19 @@ function App() {
                           className="border-t border-slate-200"
                         >
                           <td className="px-3 py-2 whitespace-nowrap">
-                            {formatDisplayDate(tx.date)}
+                            {editingTransactionId === tx.transactionId ? (
+                              <input
+                                type="date"
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                value={editingTransactionDate}
+                                onChange={(e) =>
+                                  setEditingTransactionDate(e.target.value)
+                                }
+                                autoFocus
+                              />
+                            ) : (
+                              formatDisplayDate(tx.date)
+                            )}
                           </td>
                           <td className="px-3 py-2">{tx.orNumber || "—"}</td>
                           <td className="px-3 py-2">{tx.type}</td>
@@ -1656,14 +1693,47 @@ function App() {
                             {currency(tx.runningBalance)}
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <button
-                              type="button"
-                              disabled={isSaving}
-                              onClick={() => handleDeleteTransaction(tx)}
-                              className="text-xs text-rose-600 hover:underline disabled:opacity-50"
-                            >
-                              Delete
-                            </button>
+                            <div className="flex justify-end gap-2">
+                              {editingTransactionId === tx.transactionId ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={isSaving}
+                                    onClick={() => saveEditingTransactionDate(tx)}
+                                    className="text-xs text-emerald-700 hover:underline disabled:opacity-50"
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isSaving}
+                                    onClick={cancelEditingTransactionDate}
+                                    className="text-xs text-slate-600 hover:underline disabled:opacity-50"
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={isSaving}
+                                    onClick={() => startEditingTransactionDate(tx)}
+                                    className="text-xs text-slate-700 hover:underline disabled:opacity-50"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isSaving}
+                                    onClick={() => handleDeleteTransaction(tx)}
+                                    className="text-xs text-rose-600 hover:underline disabled:opacity-50"
+                                  >
+                                    Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -1999,13 +2069,14 @@ function App() {
                       <th className="px-3 py-2 text-left">OR #</th>
                       <th className="px-3 py-2 text-left">Transaction</th>
                       <th className="px-3 py-2 text-right">Amount</th>
+                      <th className="px-3 py-2 text-right"> </th>
                     </tr>
                   </thead>
                   <tbody>
                     {systemTransactionsByDate.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={5}
+                          colSpan={6}
                           className="px-3 py-6 text-center text-slate-500"
                         >
                           No transactions in this range
@@ -2018,7 +2089,19 @@ function App() {
                           className="border-t border-slate-200"
                         >
                           <td className="px-3 py-2 whitespace-nowrap">
-                            {formatDisplayDate(tx.date)}
+                            {editingTransactionId === tx.transactionId ? (
+                              <input
+                                type="date"
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                value={editingTransactionDate}
+                                onChange={(e) =>
+                                  setEditingTransactionDate(e.target.value)
+                                }
+                                autoFocus
+                              />
+                            ) : (
+                              formatDisplayDate(tx.date)
+                            )}
                           </td>
                           <td className="px-3 py-2">
                             {
@@ -2032,6 +2115,39 @@ function App() {
                           </td>
                           <td className="px-3 py-2 text-right">
                             {transactionAmountDisplay(tx)}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <div className="flex justify-end gap-2">
+                              {editingTransactionId === tx.transactionId ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={isSaving}
+                                    onClick={() => saveEditingTransactionDate(tx)}
+                                    className="text-xs text-emerald-700 hover:underline disabled:opacity-50"
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isSaving}
+                                    onClick={cancelEditingTransactionDate}
+                                    className="text-xs text-slate-600 hover:underline disabled:opacity-50"
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={isSaving}
+                                  onClick={() => startEditingTransactionDate(tx)}
+                                  className="text-xs text-slate-700 hover:underline disabled:opacity-50"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))
