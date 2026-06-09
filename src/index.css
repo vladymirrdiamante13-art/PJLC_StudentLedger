@@ -75,4 +75,70 @@ body {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+
+  .name-list-page {
+    width: 8.5in;
+    height: 11in;
+    box-sizing: border-box;
+    padding: 0.55in 0.65in;
+    background: #fff;
+    color: #111827;
+    page-break-after: always;
+    break-after: page;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .name-list-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  .name-list-header {
+    margin-bottom: 0.22in;
+    text-align: center;
+  }
+
+  .name-list-school {
+    margin: 0;
+    font-size: 10pt;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+
+  .name-list-header h1 {
+    margin: 0.06in 0 0;
+    font-size: 17pt;
+    font-weight: 800;
+  }
+
+  .name-list-header p {
+    margin: 0.04in 0 0;
+    font-size: 9pt;
+  }
+
+  .name-list-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10.5pt;
+  }
+
+  .name-list-table td {
+    height: 0.275in;
+    border-bottom: 1px solid #d1d5db;
+    padding: 0.035in 0.08in;
+  }
+
+  .name-list-number {
+    width: 0.45in;
+    color: #475569;
+    font-weight: 700;
+    text-align: right;
+  }
+
+  .name-list-empty {
+    text-align: center;
+    color: #64748b;
+  }
 }

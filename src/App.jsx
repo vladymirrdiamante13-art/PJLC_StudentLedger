@@ -12,6 +12,7 @@ import {
   fetchSoaRows,
   ensureCurrentSchoolYear,
   insertStudent,
+  updateStudentName,
   insertSoaRow,
   insertSoaRowsBulk,
   deleteStudent,
@@ -31,14 +32,70 @@ const AUTH_SESSION_KEY = "pjlc_app_unlocked";
 const SCHOOL_YEAR_SESSION_KEY = "pjlc_selected_school_year";
 
 const DEFAULT_GRADE_LEVELS = [
-  { id: "k1", name: "Kinder 1", generalFees: 9650, tuition: 15000, books: 4200, grandTotal: 28850 },
-  { id: "k2", name: "Kinder 2", generalFees: 9650, tuition: 15000, books: 4200, grandTotal: 28850 },
-  { id: "g1", name: "Grade 1", generalFees: 11100, tuition: 15000, books: 5800, grandTotal: 31900 },
-  { id: "g2", name: "Grade 2", generalFees: 11100, tuition: 15000, books: 5800, grandTotal: 31900 },
-  { id: "g3", name: "Grade 3", generalFees: 14000, tuition: 15000, books: 5800, grandTotal: 34800 },
-  { id: "g4", name: "Grade 4", generalFees: 14000, tuition: 15000, books: 6500, grandTotal: 35500 },
-  { id: "g5", name: "Grade 5", generalFees: 14000, tuition: 15000, books: 6500, grandTotal: 35500 },
-  { id: "g6", name: "Grade 6", generalFees: 14000, tuition: 15000, books: 6500, grandTotal: 35500 },
+  {
+    id: "k1",
+    name: "Kinder 1",
+    generalFees: 9650,
+    tuition: 15000,
+    books: 4200,
+    grandTotal: 28850,
+  },
+  {
+    id: "k2",
+    name: "Kinder 2",
+    generalFees: 9650,
+    tuition: 15000,
+    books: 4200,
+    grandTotal: 28850,
+  },
+  {
+    id: "g1",
+    name: "Grade 1",
+    generalFees: 11100,
+    tuition: 15000,
+    books: 5800,
+    grandTotal: 31900,
+  },
+  {
+    id: "g2",
+    name: "Grade 2",
+    generalFees: 11100,
+    tuition: 15000,
+    books: 5800,
+    grandTotal: 31900,
+  },
+  {
+    id: "g3",
+    name: "Grade 3",
+    generalFees: 14000,
+    tuition: 15000,
+    books: 5800,
+    grandTotal: 34800,
+  },
+  {
+    id: "g4",
+    name: "Grade 4",
+    generalFees: 14000,
+    tuition: 15000,
+    books: 6500,
+    grandTotal: 35500,
+  },
+  {
+    id: "g5",
+    name: "Grade 5",
+    generalFees: 14000,
+    tuition: 15000,
+    books: 6500,
+    grandTotal: 35500,
+  },
+  {
+    id: "g6",
+    name: "Grade 6",
+    generalFees: 14000,
+    tuition: 15000,
+    books: 6500,
+    grandTotal: 35500,
+  },
 ];
 
 const currency = (value) =>
@@ -90,7 +147,10 @@ const workbookSheet = (name, headers, rows) => `
     <thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
     <tbody>
       ${rows
-        .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+        .map(
+          (row) =>
+            `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`,
+        )
         .join("")}
     </tbody>
   </table>
@@ -211,7 +271,9 @@ const downloadWorkbook = ({
 </body>
 </html>`;
 
-  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const blob = new Blob([html], {
+    type: "application/vnd.ms-excel;charset=utf-8",
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -230,29 +292,62 @@ function StudentsTable({
   getGradeName,
   maxHeight = "max-h-80",
   onDelete,
+  onRename,
   isSaving,
 }) {
+  const [editingStudentId, setEditingStudentId] = useState("");
+  const [editingName, setEditingName] = useState("");
+  const hasActions = Boolean(onDelete || onRename);
+
+  const startEditing = (student) => {
+    setEditingStudentId(student.studentId);
+    setEditingName(student.studentName);
+  };
+
+  const cancelEditing = () => {
+    setEditingStudentId("");
+    setEditingName("");
+  };
+
+  const saveEditing = (student) => {
+    const nextName = editingName.trim();
+    if (!nextName || nextName === student.studentName) {
+      cancelEditing();
+      return;
+    }
+    onRename?.(student, nextName);
+    cancelEditing();
+  };
+
   return (
-    <div className={`${maxHeight} overflow-auto rounded-md border border-slate-200`}>
+    <div
+      className={`${maxHeight} overflow-auto rounded-md border border-slate-200`}
+    >
       <table className="min-w-full text-sm">
         <thead className="sticky top-0 z-10 bg-slate-100 shadow-sm">
           <tr>
             <th className="px-3 py-2 text-left font-semibold">Student name</th>
             <th className="px-3 py-2 text-left font-semibold">Grade</th>
             <th className="px-3 py-2 text-right font-semibold">Balance</th>
-            {onDelete && <th className="px-3 py-2 text-right font-semibold"> </th>}
+            {hasActions && (
+              <th className="px-3 py-2 text-right font-semibold"> </th>
+            )}
           </tr>
         </thead>
         <tbody>
           {students.length === 0 ? (
             <tr>
-              <td colSpan={onDelete ? 4 : 3} className="px-3 py-6 text-center text-slate-500">
+              <td
+                colSpan={hasActions ? 4 : 3}
+                className="px-3 py-6 text-center text-slate-500"
+              >
                 No students found
               </td>
             </tr>
           ) : (
             students.map((student) => {
               const selected = selectedStudentId === student.studentId;
+              const isEditing = editingStudentId === student.studentId;
               return (
                 <tr
                   key={student.studentId}
@@ -261,8 +356,31 @@ function StudentsTable({
                     selected ? "bg-slate-900 text-white" : "hover:bg-slate-50"
                   }`}
                 >
-                  <td className="px-3 py-2 font-medium">{student.studentName}</td>
-                  <td className={`px-3 py-2 ${selected ? "text-slate-200" : "text-slate-600"}`}>
+                  <td className="px-3 py-2 font-medium">
+                    {isEditing ? (
+                      <input
+                        className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-900"
+                        value={editingName}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            saveEditing(student);
+                          }
+                          if (e.key === "Escape") {
+                            cancelEditing();
+                          }
+                        }}
+                        autoFocus
+                      />
+                    ) : (
+                      student.studentName
+                    )}
+                  </td>
+                  <td
+                    className={`px-3 py-2 ${selected ? "text-slate-200" : "text-slate-600"}`}
+                  >
                     {getGradeName(student.gradeLevelId)}
                   </td>
                   <td
@@ -270,19 +388,65 @@ function StudentsTable({
                   >
                     {currency(balanceMap[student.studentId])}
                   </td>
-                  {onDelete && (
+                  {hasActions && (
                     <td className="px-3 py-2 text-right">
-                      <button
-                        type="button"
-                        disabled={isSaving}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDelete(student);
-                        }}
-                        className="rounded bg-rose-600 px-2 py-0.5 text-xs text-white hover:bg-rose-700 disabled:opacity-50"
-                      >
-                        Delete
-                      </button>
+                      <div className="flex justify-end gap-1">
+                        {isEditing ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={isSaving}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                saveEditing(student);
+                              }}
+                              className="rounded bg-emerald-700 px-2 py-0.5 text-xs text-white hover:bg-emerald-800 disabled:opacity-50"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isSaving}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                cancelEditing();
+                              }}
+                              className="rounded bg-slate-200 px-2 py-0.5 text-xs text-slate-800 hover:bg-slate-300 disabled:opacity-50"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            {onRename && (
+                              <button
+                                type="button"
+                                disabled={isSaving}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  startEditing(student);
+                                }}
+                                className="rounded bg-slate-700 px-2 py-0.5 text-xs text-white hover:bg-slate-800 disabled:opacity-50"
+                              >
+                                Edit
+                              </button>
+                            )}
+                            {onDelete && (
+                              <button
+                                type="button"
+                                disabled={isSaving}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onDelete(student);
+                                }}
+                                className="rounded bg-rose-600 px-2 py-0.5 text-xs text-white hover:bg-rose-700 disabled:opacity-50"
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -295,6 +459,56 @@ function StudentsTable({
   );
 }
 
+function chunkRows(items, size) {
+  const pages = [];
+  for (let i = 0; i < items.length; i += size) {
+    pages.push(items.slice(i, i + size));
+  }
+  return pages.length ? pages : [[]];
+}
+
+function GradeNameListPrintBundle({ gradeName, students, schoolYearLabel, documentDate }) {
+  const pages = chunkRows(students, 30);
+
+  return (
+    <>
+      {pages.map((pageStudents, pageIndex) => {
+        const offset = pageIndex * 30;
+        return (
+          <section key={`name-list-${pageIndex}`} className="name-list-page">
+            <div className="name-list-header">
+              <p className="name-list-school">Palawan Jewels Learning Center</p>
+              <h1>{gradeName || "Grade Level"} Student List</h1>
+              <p>
+                {schoolYearLabel}
+                {schoolYearLabel && documentDate ? " · " : ""}
+                {documentDate}
+              </p>
+            </div>
+            <table className="name-list-table">
+              <tbody>
+                {pageStudents.map((student, index) => (
+                  <tr key={student.studentId}>
+                    <td className="name-list-number">{offset + index + 1}</td>
+                    <td>{student.studentName}</td>
+                  </tr>
+                ))}
+                {pageStudents.length === 0 && (
+                  <tr>
+                    <td className="name-list-empty" colSpan={2}>
+                      No students in this grade level
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
 function App() {
   const [isAppUnlocked, setIsAppUnlocked] = useState(
     () => sessionStorage.getItem(AUTH_SESSION_KEY) === "true",
@@ -303,10 +517,15 @@ function App() {
   const [loginMessage, setLoginMessage] = useState("");
   const [feeSettings, setFeeSettings] = useState(() => {
     try {
-      const stored = JSON.parse(localStorage.getItem(FEE_SETTINGS_KEY) || "null");
+      const stored = JSON.parse(
+        localStorage.getItem(FEE_SETTINGS_KEY) || "null",
+      );
       if (Array.isArray(stored)) {
         return DEFAULT_GRADE_LEVELS.map((base) =>
-          normalizeGrade({ ...base, ...(stored.find((g) => g.id === base.id) ?? {}) }),
+          normalizeGrade({
+            ...base,
+            ...(stored.find((g) => g.id === base.id) ?? {}),
+          }),
         );
       }
     } catch {
@@ -327,7 +546,10 @@ function App() {
   );
 
   const [activeTab, setActiveTab] = useState("ledger");
-  const [studentForm, setStudentForm] = useState({ studentName: "", gradeLevelId: "k1" });
+  const [studentForm, setStudentForm] = useState({
+    studentName: "",
+    gradeLevelId: "k1",
+  });
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStudentId, setSelectedStudentId] = useState("");
   const [txForm, setTxForm] = useState({
@@ -343,8 +565,17 @@ function App() {
   const [billToInput, setBillToInput] = useState("");
   const [billToPrinted, setBillToPrinted] = useState("");
   const [printMode, setPrintMode] = useState("single");
+  const [printDocumentType, setPrintDocumentType] = useState("soa");
   const [printGradeId, setPrintGradeId] = useState("");
-  const [printDateRange, setPrintDateRange] = useState({ startDate: "", endDate: "" });
+  const [nameListGradeId, setNameListGradeId] = useState("");
+  const [nameListPrintData, setNameListPrintData] = useState({
+    gradeName: "",
+    students: [],
+  });
+  const [printDateRange, setPrintDateRange] = useState({
+    startDate: "",
+    endDate: "",
+  });
   const [tickets, setTickets] = useState([]);
   const [selectedPrintStudentIds, setSelectedPrintStudentIds] = useState([]);
   const [adminPasswordInput, setAdminPasswordInput] = useState("");
@@ -362,14 +593,23 @@ function App() {
     secondPassword: "",
   });
 
-  const gradeLevels = useMemo(() => makeGradeLevels(feeSettings), [feeSettings]);
+  const gradeLevels = useMemo(
+    () => makeGradeLevels(feeSettings),
+    [feeSettings],
+  );
   const getGradeById = useCallback(
     (id) => feeSettings.find((g) => g.id === id),
     [feeSettings],
   );
+  const getGradeName = useCallback(
+    (id) => getGradeById(id)?.name ?? "—",
+    [getGradeById],
+  );
 
   const activeSchoolYear = useMemo(
-    () => schoolYears.find((year) => year.schoolYearId === activeSchoolYearId) ?? schoolYears[0],
+    () =>
+      schoolYears.find((year) => year.schoolYearId === activeSchoolYearId) ??
+      schoolYears[0],
     [activeSchoolYearId, schoolYears],
   );
   const archivedSchoolYears = useMemo(
@@ -377,45 +617,49 @@ function App() {
     [schoolYears],
   );
 
-  const loadData = useCallback(async (targetSchoolYearId = activeSchoolYearId) => {
-    setIsLoading(true);
-    setLoadError("");
-    setCloudMessage("Loading from cloud…");
-    try {
-      const { current, years } = await ensureCurrentSchoolYear();
-      const selectedYearId =
-        targetSchoolYearId && years.some((year) => year.schoolYearId === targetSchoolYearId)
-          ? targetSchoolYearId
-          : current.schoolYearId;
-      const [studentRows, soaRows, allStudentRows] = await Promise.all([
-        fetchStudents(selectedYearId),
-        fetchSoaRows(selectedYearId),
-        fetchAllStudents(),
-      ]);
-      setSchoolYears(years);
-      setActiveSchoolYearId(selectedYearId);
-      sessionStorage.setItem(SCHOOL_YEAR_SESSION_KEY, selectedYearId);
-      setStudents(studentRows);
-      setAllSchoolYearStudents(allStudentRows);
-      setLedgerTransactions(soaRows);
-      setCloudMessage("Synced with Supabase.");
-    } catch (err) {
-      const msg = err.message ?? "Could not load data from Supabase.";
-      const needsLatestMigration =
-        msg.includes("school_years") ||
-        msg.includes("school_year_id") ||
-        msg.includes("schema cache");
-      const hint = needsLatestMigration
-        ? " Run the latest supabase/migrate-soa_rows.sql in the Supabase SQL Editor, then click Refresh."
-        : msg.includes("soa_rows")
-          ? " Run supabase/migrate-soa_rows.sql in the Supabase SQL Editor, then click Refresh."
-          : "";
-      setLoadError(msg + hint);
-      setCloudMessage("");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [activeSchoolYearId]);
+  const loadData = useCallback(
+    async (targetSchoolYearId = activeSchoolYearId) => {
+      setIsLoading(true);
+      setLoadError("");
+      setCloudMessage("Loading from cloud…");
+      try {
+        const { current, years } = await ensureCurrentSchoolYear();
+        const selectedYearId =
+          targetSchoolYearId &&
+          years.some((year) => year.schoolYearId === targetSchoolYearId)
+            ? targetSchoolYearId
+            : current.schoolYearId;
+        const [studentRows, soaRows, allStudentRows] = await Promise.all([
+          fetchStudents(selectedYearId),
+          fetchSoaRows(selectedYearId),
+          fetchAllStudents(),
+        ]);
+        setSchoolYears(years);
+        setActiveSchoolYearId(selectedYearId);
+        sessionStorage.setItem(SCHOOL_YEAR_SESSION_KEY, selectedYearId);
+        setStudents(studentRows);
+        setAllSchoolYearStudents(allStudentRows);
+        setLedgerTransactions(soaRows);
+        setCloudMessage("Synced with Supabase.");
+      } catch (err) {
+        const msg = err.message ?? "Could not load data from Supabase.";
+        const needsLatestMigration =
+          msg.includes("school_years") ||
+          msg.includes("school_year_id") ||
+          msg.includes("schema cache");
+        const hint = needsLatestMigration
+          ? " Run the latest supabase/migrate-soa_rows.sql in the Supabase SQL Editor, then click Refresh."
+          : msg.includes("soa_rows")
+            ? " Run supabase/migrate-soa_rows.sql in the Supabase SQL Editor, then click Refresh."
+            : "";
+        setLoadError(msg + hint);
+        setCloudMessage("");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [activeSchoolYearId],
+  );
 
   useEffect(() => {
     if (!isAppUnlocked) return;
@@ -424,23 +668,31 @@ function App() {
   }, [isAppUnlocked, loadData]);
 
   const sortedStudents = useMemo(
-    () => [...students].sort((a, b) => a.studentName.localeCompare(b.studentName)),
+    () =>
+      [...students].sort((a, b) => a.studentName.localeCompare(b.studentName)),
     [students],
   );
 
-  const effectiveSelectedStudentId = selectedStudentId || sortedStudents[0]?.studentId || "";
-  const selectedStudent = sortedStudents.find((s) => s.studentId === effectiveSelectedStudentId);
+  const effectiveSelectedStudentId =
+    selectedStudentId || sortedStudents[0]?.studentId || "";
+  const selectedStudent = sortedStudents.find(
+    (s) => s.studentId === effectiveSelectedStudentId,
+  );
 
   const selectedStudentLedger = useMemo(() => {
     return recomputeRunningBalances(
-      ledgerTransactions.filter((tx) => tx.studentId === effectiveSelectedStudentId),
+      ledgerTransactions.filter(
+        (tx) => tx.studentId === effectiveSelectedStudentId,
+      ),
     );
   }, [effectiveSelectedStudentId, ledgerTransactions]);
 
   const filteredStudents = useMemo(() => {
     const key = searchTerm.trim().toLowerCase();
     if (!key) return sortedStudents;
-    return sortedStudents.filter((s) => s.studentName.toLowerCase().includes(key));
+    return sortedStudents.filter((s) =>
+      s.studentName.toLowerCase().includes(key),
+    );
   }, [searchTerm, sortedStudents]);
 
   const studentBalanceMap = useMemo(() => {
@@ -455,7 +707,11 @@ function App() {
   }, [ledgerTransactions, students]);
 
   const totalReceivables = useMemo(
-    () => students.reduce((sum, student) => sum + (studentBalanceMap[student.studentId] || 0), 0),
+    () =>
+      students.reduce(
+        (sum, student) => sum + (studentBalanceMap[student.studentId] || 0),
+        0,
+      ),
     [studentBalanceMap, students],
   );
 
@@ -476,9 +732,18 @@ function App() {
       .slice(0, 8);
   }, [allSchoolYearStudents, studentForm.studentName]);
 
+  const selectedNameListGradeId = nameListGradeId || gradeLevels[0]?.gradeLevelId || "";
+  const selectedNameListGradeName = getGradeName(selectedNameListGradeId);
+  const nameListStudents = useMemo(
+    () =>
+      sortedStudents.filter((student) => student.gradeLevelId === selectedNameListGradeId),
+    [selectedNameListGradeId, sortedStudents],
+  );
+
   const systemTransactionsByDate = useMemo(() => {
     return recomputeRunningBalances(ledgerTransactions).filter((tx) => {
-      const passStart = !dateFilter.startDate || tx.date >= dateFilter.startDate;
+      const passStart =
+        !dateFilter.startDate || tx.date >= dateFilter.startDate;
       const passEnd = !dateFilter.endDate || tx.date <= dateFilter.endDate;
       return passStart && passEnd;
     });
@@ -519,7 +784,9 @@ function App() {
   const handleLogin = (event) => {
     event.preventDefault();
     if (!ADMIN_PASSWORD) {
-      setLoginMessage("Missing VITE_ADMIN_PASSWORD. Add it to .env.local and restart the app.");
+      setLoginMessage(
+        "Missing VITE_ADMIN_PASSWORD. Add it to .env.local and restart the app.",
+      );
       return;
     }
     if (loginPasswordInput === ADMIN_PASSWORD) {
@@ -554,12 +821,17 @@ function App() {
         gradeLevelId: studentForm.gradeLevelId,
       });
       const dateIso = today();
-      const baseline = baselinePayloads(created.studentId, grade, dateIso).map((row) => ({
-        ...row,
-        schoolYearId: activeSchoolYear.schoolYearId,
-      }));
+      const baseline = baselinePayloads(created.studentId, grade, dateIso).map(
+        (row) => ({
+          ...row,
+          schoolYearId: activeSchoolYear.schoolYearId,
+        }),
+      );
       await insertSoaRowsBulk(baseline);
-      setStudentForm({ studentName: "", gradeLevelId: studentForm.gradeLevelId });
+      setStudentForm({
+        studentName: "",
+        gradeLevelId: studentForm.gradeLevelId,
+      });
       setSelectedStudentId(created.studentId);
       setActiveTab("ledger");
     });
@@ -568,8 +840,14 @@ function App() {
   const handleAddTransaction = (event) => {
     event.preventDefault();
     if (!activeSchoolYear) return;
-    if (!effectiveSelectedStudentId || !txForm.amount || Number(txForm.amount) <= 0) return;
-    if (txForm.purposeKey !== "other" && !PURPOSE_KEYS[txForm.purposeKey]) return;
+    if (
+      !effectiveSelectedStudentId ||
+      !txForm.amount ||
+      Number(txForm.amount) <= 0
+    )
+      return;
+    if (txForm.purposeKey !== "other" && !PURPOSE_KEYS[txForm.purposeKey])
+      return;
     if (txForm.purposeKey === "other" && !txForm.customPurpose.trim()) return;
 
     const purpose =
@@ -588,7 +866,13 @@ function App() {
         orNumber: txForm.orNumber.trim(),
         purposeKey: txForm.purposeKey,
       });
-      setTxForm((old) => ({ ...old, amount: "", orNumber: "", customPurpose: "", date: today() }));
+      setTxForm((old) => ({
+        ...old,
+        amount: "",
+        orNumber: "",
+        customPurpose: "",
+        date: today(),
+      }));
     });
   };
 
@@ -606,6 +890,15 @@ function App() {
     });
   };
 
+  const handleRenameStudent = (student, nextName) => {
+    runSave("Updating student name…", async () => {
+      await updateStudentName(student.studentId, nextName);
+      if (selectedStudentId === student.studentId) {
+        setSelectedStudentId(student.studentId);
+      }
+    });
+  };
+
   const handleDeleteTransaction = (tx) => {
     if (!window.confirm("Delete this ledger entry?")) return;
     runSave("Deleting entry from cloud…", async () => {
@@ -616,7 +909,9 @@ function App() {
   const handleAdminUnlock = (event) => {
     event.preventDefault();
     if (!ADMIN_PASSWORD) {
-      setAdminMessage("Missing VITE_ADMIN_PASSWORD. Add it to .env.local and restart the app.");
+      setAdminMessage(
+        "Missing VITE_ADMIN_PASSWORD. Add it to .env.local and restart the app.",
+      );
       return;
     }
     if (adminPasswordInput === ADMIN_PASSWORD) {
@@ -632,7 +927,9 @@ function App() {
     const nextAmount = Math.max(0, Number(value) || 0);
     setFeeSettings((old) =>
       old.map((grade) =>
-        grade.id === gradeId ? normalizeGrade({ ...grade, [field]: nextAmount }) : grade,
+        grade.id === gradeId
+          ? normalizeGrade({ ...grade, [field]: nextAmount })
+          : grade,
       ),
     );
   };
@@ -656,7 +953,9 @@ function App() {
       archiveForm.firstPassword !== ADMIN_PASSWORD ||
       archiveForm.secondPassword !== ADMIN_PASSWORD
     ) {
-      setAdminMessage("Enter the admin password in both archive confirmation fields.");
+      setAdminMessage(
+        "Enter the admin password in both archive confirmation fields.",
+      );
       return;
     }
     if (!/^\d{4}$/.test(startYear) || !/^\d{4}$/.test(endYear)) {
@@ -664,7 +963,9 @@ function App() {
       return;
     }
     if (Number(endYear) <= Number(startYear)) {
-      setAdminMessage("The ending school year must be after the starting school year.");
+      setAdminMessage(
+        "The ending school year must be after the starting school year.",
+      );
       return;
     }
     if (!activeSchoolYear) {
@@ -672,7 +973,9 @@ function App() {
       return;
     }
     if (!activeSchoolYear.isCurrent) {
-      setAdminMessage("Switch to the current school year before archiving all records.");
+      setAdminMessage(
+        "Switch to the current school year before archiving all records.",
+      );
       return;
     }
 
@@ -680,10 +983,13 @@ function App() {
     const duplicateYear = schoolYears.find(
       (year) =>
         year.schoolYearId !== activeSchoolYear.schoolYearId &&
-        normalizeSchoolYearLabel(year.label) === normalizeSchoolYearLabel(archiveLabel),
+        normalizeSchoolYearLabel(year.label) ===
+          normalizeSchoolYearLabel(archiveLabel),
     );
     if (duplicateYear) {
-      setAdminMessage(`${archiveLabel} already exists. Enter a different school year.`);
+      setAdminMessage(
+        `${archiveLabel} already exists. Enter a different school year.`,
+      );
       return;
     }
 
@@ -695,18 +1001,26 @@ function App() {
       return;
     }
 
-    runSave("Archiving current school year and starting a fresh one…", async () => {
-      const nextYear = await archiveSchoolYearAndStartNew({
-        schoolYearId: activeSchoolYear.schoolYearId,
-        archiveLabel,
-      });
-      sessionStorage.setItem(SCHOOL_YEAR_SESSION_KEY, nextYear.schoolYearId);
-      setActiveSchoolYearId(nextYear.schoolYearId);
-      setSelectedStudentId("");
-      setSelectedPrintStudentIds([]);
-      setArchiveForm({ startYear: "", endYear: "", firstPassword: "", secondPassword: "" });
-      return nextYear.schoolYearId;
-    });
+    runSave(
+      "Archiving current school year and starting a fresh one…",
+      async () => {
+        const nextYear = await archiveSchoolYearAndStartNew({
+          schoolYearId: activeSchoolYear.schoolYearId,
+          archiveLabel,
+        });
+        sessionStorage.setItem(SCHOOL_YEAR_SESSION_KEY, nextYear.schoolYearId);
+        setActiveSchoolYearId(nextYear.schoolYearId);
+        setSelectedStudentId("");
+        setSelectedPrintStudentIds([]);
+        setArchiveForm({
+          startYear: "",
+          endYear: "",
+          firstPassword: "",
+          secondPassword: "",
+        });
+        return nextYear.schoolYearId;
+      },
+    );
     setAdminMessage("Archive request sent.");
   };
 
@@ -715,7 +1029,9 @@ function App() {
       deleteArchiveForm.firstPassword !== ADMIN_PASSWORD ||
       deleteArchiveForm.secondPassword !== ADMIN_PASSWORD
     ) {
-      setAdminMessage("Enter the admin password in both archive delete confirmation fields.");
+      setAdminMessage(
+        "Enter the admin password in both archive delete confirmation fields.",
+      );
       return;
     }
 
@@ -737,11 +1053,18 @@ function App() {
 
     runSave(`Deleting ${targetYear.label} archive…`, async () => {
       await deleteArchivedSchoolYear(targetYear.schoolYearId);
-      setDeleteArchiveForm({ schoolYearId: "", firstPassword: "", secondPassword: "" });
+      setDeleteArchiveForm({
+        schoolYearId: "",
+        firstPassword: "",
+        secondPassword: "",
+      });
       if (activeSchoolYearId === targetYear.schoolYearId) {
         const currentYear = schoolYears.find((year) => year.isCurrent);
         if (currentYear) {
-          sessionStorage.setItem(SCHOOL_YEAR_SESSION_KEY, currentYear.schoolYearId);
+          sessionStorage.setItem(
+            SCHOOL_YEAR_SESSION_KEY,
+            currentYear.schoolYearId,
+          );
           setActiveSchoolYearId(currentYear.schoolYearId);
           setSelectedStudentId("");
           setSelectedPrintStudentIds([]);
@@ -755,11 +1078,14 @@ function App() {
 
   const togglePrintStudent = (studentId) => {
     setSelectedPrintStudentIds((old) =>
-      old.includes(studentId) ? old.filter((id) => id !== studentId) : [...old, studentId],
+      old.includes(studentId)
+        ? old.filter((id) => id !== studentId)
+        : [...old, studentId],
     );
   };
 
   const printSelectedStudents = () => {
+    setPrintDocumentType("soa");
     const selectedIds = new Set(selectedPrintStudentIds);
     const allTickets = [];
 
@@ -785,18 +1111,39 @@ function App() {
     setTimeout(() => window.print(), 10);
   };
 
-  const openPrintModal = ({ mode = "single", gradeId = "", dateRange = null, billTo = "" } = {}) => {
+  const printGradeNameList = () => {
+    if (!selectedNameListGradeId) return;
+    setPrintDocumentType("name-list");
+    setNameListPrintData({
+      gradeName: selectedNameListGradeName,
+      students: [...nameListStudents].sort((a, b) =>
+        a.studentName.localeCompare(b.studentName),
+      ),
+    });
+    setTimeout(() => window.print(), 10);
+  };
+
+  const openPrintModal = ({
+    mode = "single",
+    gradeId = "",
+    dateRange = null,
+    billTo = "",
+  } = {}) => {
     setPrintMode(mode);
     setPrintGradeId(gradeId);
     if (dateRange) setPrintDateRange(dateRange);
     else if (mode === "daterange") {
-      setPrintDateRange({ startDate: dateFilter.startDate, endDate: dateFilter.endDate });
+      setPrintDateRange({
+        startDate: dateFilter.startDate,
+        endDate: dateFilter.endDate,
+      });
     }
     setBillToInput(billTo);
     setIsPrintModalOpen(true);
   };
 
   const startPrint = () => {
+    setPrintDocumentType("soa");
     const billToValue = billToInput.trim();
     const allTickets = [];
 
@@ -826,7 +1173,9 @@ function App() {
           )
           .forEach((student) => {
             const ledger = recomputeRunningBalances(
-              ledgerTransactions.filter((tx) => tx.studentId === student.studentId),
+              ledgerTransactions.filter(
+                (tx) => tx.studentId === student.studentId,
+              ),
             );
             pushTicket(student, ledger);
           });
@@ -838,8 +1187,10 @@ function App() {
         const ledger = recomputeRunningBalances(
           ledgerTransactions.filter((tx) => {
             if (tx.studentId !== student.studentId) return false;
-            const passStart = !printDateRange.startDate || tx.date >= printDateRange.startDate;
-            const passEnd = !printDateRange.endDate || tx.date <= printDateRange.endDate;
+            const passStart =
+              !printDateRange.startDate || tx.date >= printDateRange.startDate;
+            const passEnd =
+              !printDateRange.endDate || tx.date <= printDateRange.endDate;
             return passStart && passEnd;
           }),
         );
@@ -861,8 +1212,6 @@ function App() {
     year: "numeric",
   });
 
-  const getGradeName = (id) => getGradeById(id)?.name ?? "—";
-
   if (!isAppUnlocked) {
     return (
       <div className="mx-auto flex min-h-screen max-w-md items-center p-6">
@@ -870,10 +1219,14 @@ function App() {
           <h1 className="text-2xl font-bold text-slate-900">
             Palawan Jewels Learning Center
           </h1>
-          <p className="mt-1 text-sm text-slate-600">Enter the system password to continue.</p>
+          <p className="mt-1 text-sm text-slate-600">
+            Enter the system password to continue.
+          </p>
           <form className="mt-5 space-y-4" onSubmit={handleLogin}>
             <label className="flex flex-col gap-1">
-              <span className="text-sm font-medium text-slate-700">Password</span>
+              <span className="text-sm font-medium text-slate-700">
+                Password
+              </span>
               <input
                 type="password"
                 autoFocus
@@ -883,7 +1236,9 @@ function App() {
                 required
               />
             </label>
-            {loginMessage && <p className="text-sm text-rose-700">{loginMessage}</p>}
+            {loginMessage && (
+              <p className="text-sm text-rose-700">{loginMessage}</p>
+            )}
             <button
               type="submit"
               className="w-full rounded-md bg-slate-900 px-4 py-2 font-semibold text-white hover:bg-slate-700"
@@ -903,8 +1258,8 @@ function App() {
           Palawan Jewels Learning Center — Student Ledger & SOA
         </h1>
         <p className="mt-1 text-sm text-slate-600">
-          {activeSchoolYear?.label ?? "School year loading"} · Cloud (Supabase) · Two half-page
-          SOAs per bond sheet
+          {activeSchoolYear?.label ?? "School year loading"} · Cloud (Supabase)
+          · Two half-page SOAs per bond sheet
         </p>
 
         {(isLoading || isSaving || cloudMessage || loadError) && (
@@ -916,9 +1271,15 @@ function App() {
             }`}
           >
             {loadError && <p>{loadError}</p>}
-            {isLoading && !loadError && <p>Loading students and ledger from Supabase…</p>}
-            {isSaving && !isLoading && <p>{cloudMessage || "Saving to cloud…"}</p>}
-            {!isLoading && !isSaving && cloudMessage && !loadError && <p>{cloudMessage}</p>}
+            {isLoading && !loadError && (
+              <p>Loading students and ledger from Supabase…</p>
+            )}
+            {isSaving && !isLoading && (
+              <p>{cloudMessage || "Saving to cloud…"}</p>
+            )}
+            {!isLoading && !isSaving && cloudMessage && !loadError && (
+              <p>{cloudMessage}</p>
+            )}
           </div>
         )}
 
@@ -980,16 +1341,25 @@ function App() {
           <section className="mt-6 rounded-lg border border-slate-200 p-4">
             <h2 className="text-lg font-semibold">Enroll New Student</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Saves to Supabase and auto-posts General Fees, Tuition, and Books from the fee matrix.
+              Saves to Supabase and auto-posts General Fees, Tuition, and Books
+              from the fee matrix.
             </p>
-            <form className="mt-4 grid gap-4 md:grid-cols-3" onSubmit={handleEnrollStudent}>
+            <form
+              className="mt-4 grid gap-4 md:grid-cols-3"
+              onSubmit={handleEnrollStudent}
+            >
               <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-slate-700">Student Name</span>
+                <span className="text-sm font-medium text-slate-700">
+                  Student Name
+                </span>
                 <input
                   className="rounded-md border border-slate-300 px-3 py-2"
                   value={studentForm.studentName}
                   onChange={(e) =>
-                    setStudentForm((old) => ({ ...old, studentName: e.target.value }))
+                    setStudentForm((old) => ({
+                      ...old,
+                      studentName: e.target.value,
+                    }))
                   }
                   required
                   disabled={isSaving}
@@ -998,18 +1368,24 @@ function App() {
                   <div className="max-h-44 overflow-auto rounded-md border border-slate-200 bg-white text-sm shadow-sm">
                     {enrollmentSuggestions.map((student) => {
                       const suggestionYear =
-                        schoolYears.find((year) => year.schoolYearId === student.schoolYearId)
-                          ?.label ?? "Past school year";
+                        schoolYears.find(
+                          (year) => year.schoolYearId === student.schoolYearId,
+                        )?.label ?? "Past school year";
                       return (
                         <button
                           key={`${student.studentId}-${student.schoolYearId}`}
                           type="button"
-                          onClick={() => handleEnrollmentSuggestionSelect(student)}
+                          onClick={() =>
+                            handleEnrollmentSuggestionSelect(student)
+                          }
                           className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-3 py-2 text-left last:border-b-0 hover:bg-slate-50"
                         >
-                          <span className="font-medium text-slate-900">{student.studentName}</span>
+                          <span className="font-medium text-slate-900">
+                            {student.studentName}
+                          </span>
                           <span className="shrink-0 text-xs text-slate-500">
-                            {getGradeName(student.gradeLevelId)} · {suggestionYear}
+                            {getGradeName(student.gradeLevelId)} ·{" "}
+                            {suggestionYear}
                           </span>
                         </button>
                       );
@@ -1018,12 +1394,17 @@ function App() {
                 )}
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-slate-700">Grade Level</span>
+                <span className="text-sm font-medium text-slate-700">
+                  Grade Level
+                </span>
                 <select
                   className="rounded-md border border-slate-300 px-3 py-2"
                   value={studentForm.gradeLevelId}
                   onChange={(e) =>
-                    setStudentForm((old) => ({ ...old, gradeLevelId: e.target.value }))
+                    setStudentForm((old) => ({
+                      ...old,
+                      gradeLevelId: e.target.value,
+                    }))
                   }
                   disabled={isSaving}
                 >
@@ -1069,6 +1450,7 @@ function App() {
                   onSelect={setSelectedStudentId}
                   balanceMap={studentBalanceMap}
                   getGradeName={getGradeName}
+                  onRename={handleRenameStudent}
                   onDelete={handleDeleteStudent}
                   isSaving={isSaving}
                 />
@@ -1100,18 +1482,24 @@ function App() {
                 onSubmit={handleAddTransaction}
               >
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-slate-600">Date</span>
+                  <span className="text-xs font-medium text-slate-600">
+                    Date
+                  </span>
                   <input
                     className="rounded-md border border-slate-300 px-3 py-2 text-sm"
                     type="date"
                     value={txForm.date}
-                    onChange={(e) => setTxForm((old) => ({ ...old, date: e.target.value }))}
+                    onChange={(e) =>
+                      setTxForm((old) => ({ ...old, date: e.target.value }))
+                    }
                     required
                     disabled={isSaving}
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-slate-600">OR Number</span>
+                  <span className="text-xs font-medium text-slate-600">
+                    OR Number
+                  </span>
                   <input
                     className="rounded-md border border-slate-300 px-3 py-2 text-sm"
                     placeholder="e.g. OR-10337"
@@ -1123,19 +1511,27 @@ function App() {
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-slate-600">Entry type</span>
+                  <span className="text-xs font-medium text-slate-600">
+                    Entry type
+                  </span>
                   <select
                     className="rounded-md border border-slate-300 px-3 py-2 text-sm"
                     value={txForm.type}
-                    onChange={(e) => setTxForm((old) => ({ ...old, type: e.target.value }))}
+                    onChange={(e) =>
+                      setTxForm((old) => ({ ...old, type: e.target.value }))
+                    }
                     disabled={isSaving}
                   >
                     <option value="DEBIT">Debit (add to balance)</option>
-                    <option value="CREDIT">Credit (subtract from balance)</option>
+                    <option value="CREDIT">
+                      Credit (subtract from balance)
+                    </option>
                   </select>
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-slate-600">Amount (PHP)</span>
+                  <span className="text-xs font-medium text-slate-600">
+                    Amount (PHP)
+                  </span>
                   <input
                     className="rounded-md border border-slate-300 px-3 py-2 text-sm"
                     type="number"
@@ -1143,18 +1539,25 @@ function App() {
                     step="0.01"
                     placeholder="0.00"
                     value={txForm.amount}
-                    onChange={(e) => setTxForm((old) => ({ ...old, amount: e.target.value }))}
+                    onChange={(e) =>
+                      setTxForm((old) => ({ ...old, amount: e.target.value }))
+                    }
                     required
                     disabled={isSaving}
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-slate-600">Purpose (label only)</span>
+                  <span className="text-xs font-medium text-slate-600">
+                    Purpose (label only)
+                  </span>
                   <select
                     className="rounded-md border border-slate-300 px-3 py-2 text-sm"
                     value={txForm.purposeKey}
                     onChange={(e) =>
-                      setTxForm((old) => ({ ...old, purposeKey: e.target.value }))
+                      setTxForm((old) => ({
+                        ...old,
+                        purposeKey: e.target.value,
+                      }))
                     }
                     disabled={isSaving}
                   >
@@ -1171,7 +1574,10 @@ function App() {
                       placeholder="Custom purpose"
                       value={txForm.customPurpose}
                       onChange={(e) =>
-                        setTxForm((old) => ({ ...old, customPurpose: e.target.value }))
+                        setTxForm((old) => ({
+                          ...old,
+                          customPurpose: e.target.value,
+                        }))
                       }
                       required
                       disabled={isSaving}
@@ -1181,7 +1587,12 @@ function App() {
                 <div className="flex items-end">
                   <button
                     type="submit"
-                    disabled={!activeSchoolYear || !effectiveSelectedStudentId || isSaving || isLoading}
+                    disabled={
+                      !activeSchoolYear ||
+                      !effectiveSelectedStudentId ||
+                      isSaving ||
+                      isLoading
+                    }
                     className="w-full rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
                   >
                     Post entry
@@ -1195,7 +1606,9 @@ function App() {
                   {txForm.type === "DEBIT" ? "Debit" : "Credit"}
                 </span>
                 {" · "}
-                <span className="font-medium text-slate-700">{purposePreview}</span>
+                <span className="font-medium text-slate-700">
+                  {purposePreview}
+                </span>
                 {txForm.type === "DEBIT" ? " (+ balance)" : " (− balance)"}
               </p>
 
@@ -1215,19 +1628,27 @@ function App() {
                   <tbody>
                     {selectedStudentLedger.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-3 py-8 text-center text-slate-500">
+                        <td
+                          colSpan={7}
+                          className="px-3 py-8 text-center text-slate-500"
+                        >
                           No transactions yet
                         </td>
                       </tr>
                     ) : (
                       selectedStudentLedger.map((tx) => (
-                        <tr key={tx.transactionId} className="border-t border-slate-200">
+                        <tr
+                          key={tx.transactionId}
+                          className="border-t border-slate-200"
+                        >
                           <td className="px-3 py-2 whitespace-nowrap">
                             {formatDisplayDate(tx.date)}
                           </td>
                           <td className="px-3 py-2">{tx.orNumber || "—"}</td>
                           <td className="px-3 py-2">{tx.type}</td>
-                          <td className="px-3 py-2 whitespace-pre-line">{tx.purpose}</td>
+                          <td className="px-3 py-2 whitespace-pre-line">
+                            {tx.purpose}
+                          </td>
                           <td className="px-3 py-2 text-right">
                             {transactionAmountDisplay(tx)}
                           </td>
@@ -1268,7 +1689,9 @@ function App() {
                   <button
                     type="button"
                     onClick={() =>
-                      setSelectedPrintStudentIds(sortedStudents.map((s) => s.studentId))
+                      setSelectedPrintStudentIds(
+                        sortedStudents.map((s) => s.studentId),
+                      )
                     }
                     disabled={sortedStudents.length === 0}
                     className="rounded-md bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50"
@@ -1300,31 +1723,51 @@ function App() {
                 <table className="min-w-full text-sm">
                   <thead className="sticky top-0 z-10 bg-slate-100 shadow-sm">
                     <tr>
-                      <th className="px-3 py-2 text-left font-semibold">Print</th>
-                      <th className="px-3 py-2 text-left font-semibold">Student name</th>
-                      <th className="px-3 py-2 text-left font-semibold">Grade</th>
-                      <th className="px-3 py-2 text-right font-semibold">Balance</th>
+                      <th className="px-3 py-2 text-left font-semibold">
+                        Print
+                      </th>
+                      <th className="px-3 py-2 text-left font-semibold">
+                        Student name
+                      </th>
+                      <th className="px-3 py-2 text-left font-semibold">
+                        Grade
+                      </th>
+                      <th className="px-3 py-2 text-right font-semibold">
+                        Balance
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {sortedStudents.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                        <td
+                          colSpan={4}
+                          className="px-3 py-6 text-center text-slate-500"
+                        >
                           No students found
                         </td>
                       </tr>
                     ) : (
                       sortedStudents.map((student) => (
-                        <tr key={student.studentId} className="border-t border-slate-200">
+                        <tr
+                          key={student.studentId}
+                          className="border-t border-slate-200"
+                        >
                           <td className="px-3 py-2">
                             <input
                               type="checkbox"
-                              checked={selectedPrintStudentIds.includes(student.studentId)}
-                              onChange={() => togglePrintStudent(student.studentId)}
+                              checked={selectedPrintStudentIds.includes(
+                                student.studentId,
+                              )}
+                              onChange={() =>
+                                togglePrintStudent(student.studentId)
+                              }
                               className="h-4 w-4"
                             />
                           </td>
-                          <td className="px-3 py-2 font-medium">{student.studentName}</td>
+                          <td className="px-3 py-2 font-medium">
+                            {student.studentName}
+                          </td>
                           <td className="px-3 py-2 text-slate-600">
                             {getGradeName(student.gradeLevelId)}
                           </td>
@@ -1344,8 +1787,8 @@ function App() {
                 <div>
                   <h2 className="text-lg font-semibold">Full Backup Export</h2>
                   <p className="mt-1 text-sm text-slate-600">
-                    Exports students, transactions, balances, and the current fee matrix in one
-                    Excel file.
+                    Exports students, transactions, balances, and the current
+                    fee matrix in one Excel file.
                   </p>
                 </div>
                 <button
@@ -1353,7 +1796,8 @@ function App() {
                   onClick={() =>
                     downloadWorkbook({
                       students: sortedStudents,
-                      ledgerTransactions: recomputeRunningBalances(ledgerTransactions),
+                      ledgerTransactions:
+                        recomputeRunningBalances(ledgerTransactions),
                       gradeLevels,
                       balanceMap: studentBalanceMap,
                       getGradeName,
@@ -1369,13 +1813,77 @@ function App() {
             </div>
 
             <div className="rounded-lg border border-slate-200 p-4">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Print Student Name List</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Select a grade level to preview and print an alphabetized numbered list.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs font-medium text-slate-600">Grade Level</span>
+                    <select
+                      className="min-w-44 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      value={selectedNameListGradeId}
+                      onChange={(e) => setNameListGradeId(e.target.value)}
+                      disabled={isLoading}
+                    >
+                      {gradeLevels.map((grade) => (
+                        <option key={grade.gradeLevelId} value={grade.gradeLevelId}>
+                          {grade.gradeLevelName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={printGradeNameList}
+                    disabled={isLoading || nameListStudents.length === 0}
+                    className="rounded-md bg-indigo-700 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-800 disabled:opacity-50"
+                  >
+                    Print List
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 max-h-80 overflow-auto rounded-md border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="sticky top-0 z-10 bg-slate-100">
+                    <tr>
+                      <th className="w-16 px-3 py-2 text-right font-semibold">#</th>
+                      <th className="px-3 py-2 text-left font-semibold">Student name</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nameListStudents.length === 0 ? (
+                      <tr>
+                        <td colSpan={2} className="px-3 py-6 text-center text-slate-500">
+                          No students in this grade level
+                        </td>
+                      </tr>
+                    ) : (
+                      nameListStudents.map((student, index) => (
+                        <tr key={student.studentId} className="border-t border-slate-200">
+                          <td className="px-3 py-2 text-right text-slate-500">{index + 1}</td>
+                          <td className="px-3 py-2 font-medium">{student.studentName}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 p-4">
               <h2 className="text-lg font-semibold">Print by Grade Level</h2>
               <div className="mt-3 max-h-64 overflow-auto rounded-md border border-slate-200">
                 <table className="min-w-full text-sm">
                   <thead className="sticky top-0 bg-slate-100">
                     <tr>
                       <th className="px-3 py-2 text-left">Grade</th>
-                      <th className="px-3 py-2 text-right">Students with balance</th>
+                      <th className="px-3 py-2 text-right">
+                        Students with balance
+                      </th>
                       <th className="px-3 py-2 text-right">Total receivable</th>
                       <th className="px-3 py-2 text-right">Action</th>
                     </tr>
@@ -1385,26 +1893,41 @@ function App() {
                       const studentsInGrade = sortedStudents.filter(
                         (s) => s.gradeLevelId === grade.gradeLevelId,
                       );
-                      const studentsWithBalance = studentsInGrade.filter((student) =>
-                        hasOutstandingBalance(studentBalanceMap[student.studentId]),
+                      const studentsWithBalance = studentsInGrade.filter(
+                        (student) =>
+                          hasOutstandingBalance(
+                            studentBalanceMap[student.studentId],
+                          ),
                       );
                       const receivable = studentsInGrade.reduce(
                         (sum, s) => sum + (studentBalanceMap[s.studentId] || 0),
                         0,
                       );
                       return (
-                        <tr key={grade.gradeLevelId} className="border-t border-slate-200">
-                          <td className="px-3 py-2 font-medium">{grade.gradeLevelName}</td>
-                          <td className="px-3 py-2 text-right">{studentsWithBalance.length}</td>
+                        <tr
+                          key={grade.gradeLevelId}
+                          className="border-t border-slate-200"
+                        >
+                          <td className="px-3 py-2 font-medium">
+                            {grade.gradeLevelName}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            {studentsWithBalance.length}
+                          </td>
                           <td className="px-3 py-2 text-right font-semibold text-rose-700">
                             {currency(receivable)}
                           </td>
                           <td className="px-3 py-2 text-right">
                             <button
                               type="button"
-                              disabled={studentsWithBalance.length === 0 || isLoading}
+                              disabled={
+                                studentsWithBalance.length === 0 || isLoading
+                              }
                               onClick={() =>
-                                openPrintModal({ mode: "grade", gradeId: grade.gradeLevelId })
+                                openPrintModal({
+                                  mode: "grade",
+                                  gradeId: grade.gradeLevelId,
+                                })
                               }
                               className="rounded bg-indigo-700 px-2 py-1 text-xs font-semibold text-white hover:bg-indigo-800 disabled:opacity-50"
                             >
@@ -1420,14 +1943,19 @@ function App() {
             </div>
 
             <div className="rounded-lg border border-slate-200 p-4">
-              <h2 className="text-lg font-semibold">Transactions by Date Range</h2>
+              <h2 className="text-lg font-semibold">
+                Transactions by Date Range
+              </h2>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <input
                   className="rounded-md border border-slate-300 px-3 py-2 text-sm"
                   type="date"
                   value={dateFilter.startDate}
                   onChange={(e) =>
-                    setDateFilter((old) => ({ ...old, startDate: e.target.value }))
+                    setDateFilter((old) => ({
+                      ...old,
+                      startDate: e.target.value,
+                    }))
                   }
                 />
                 <input
@@ -1435,7 +1963,10 @@ function App() {
                   type="date"
                   value={dateFilter.endDate}
                   onChange={(e) =>
-                    setDateFilter((old) => ({ ...old, endDate: e.target.value }))
+                    setDateFilter((old) => ({
+                      ...old,
+                      endDate: e.target.value,
+                    }))
                   }
                 />
                 <button
@@ -1455,8 +1986,9 @@ function App() {
                 </button>
               </div>
               <p className="mt-1 text-xs text-slate-600">
-                Prints two half-page SOAs per bond sheet. Overflow continues on the next half
-                with Balance Forwarded; Amount Due only on each student&apos;s last half.
+                Prints two half-page SOAs per bond sheet. Overflow continues on
+                the next half with Balance Forwarded; Amount Due only on each
+                student&apos;s last half.
               </p>
               <div className="mt-3 max-h-80 overflow-auto rounded-md border border-slate-200">
                 <table className="min-w-full text-sm">
@@ -1472,21 +2004,32 @@ function App() {
                   <tbody>
                     {systemTransactionsByDate.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        <td
+                          colSpan={5}
+                          className="px-3 py-6 text-center text-slate-500"
+                        >
                           No transactions in this range
                         </td>
                       </tr>
                     ) : (
                       systemTransactionsByDate.map((tx) => (
-                        <tr key={tx.transactionId} className="border-t border-slate-200">
+                        <tr
+                          key={tx.transactionId}
+                          className="border-t border-slate-200"
+                        >
                           <td className="px-3 py-2 whitespace-nowrap">
                             {formatDisplayDate(tx.date)}
                           </td>
                           <td className="px-3 py-2">
-                            {students.find((s) => s.studentId === tx.studentId)?.studentName}
+                            {
+                              students.find((s) => s.studentId === tx.studentId)
+                                ?.studentName
+                            }
                           </td>
                           <td className="px-3 py-2">{tx.orNumber || "—"}</td>
-                          <td className="px-3 py-2 whitespace-pre-line">{tx.purpose}</td>
+                          <td className="px-3 py-2 whitespace-pre-line">
+                            {tx.purpose}
+                          </td>
                           <td className="px-3 py-2 text-right">
                             {transactionAmountDisplay(tx)}
                           </td>
@@ -1505,7 +2048,10 @@ function App() {
             <div className="rounded-lg border border-slate-200 p-4">
               <h2 className="text-lg font-semibold">Admin Access</h2>
               {!isAdminUnlocked ? (
-                <form className="mt-4 flex max-w-lg flex-wrap gap-3" onSubmit={handleAdminUnlock}>
+                <form
+                  className="mt-4 flex max-w-lg flex-wrap gap-3"
+                  onSubmit={handleAdminUnlock}
+                >
                   <input
                     type="password"
                     className="min-w-64 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
@@ -1537,7 +2083,9 @@ function App() {
                   </button>
                 </div>
               )}
-              {adminMessage && <p className="mt-3 text-sm text-slate-700">{adminMessage}</p>}
+              {adminMessage && (
+                <p className="mt-3 text-sm text-slate-700">{adminMessage}</p>
+              )}
             </div>
 
             {isAdminUnlocked && (
@@ -1545,10 +2093,12 @@ function App() {
                 <div className="rounded-lg border border-slate-200 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <h2 className="text-lg font-semibold">Future Enrollment Prices</h2>
+                      <h2 className="text-lg font-semibold">
+                        Future Enrollment Prices
+                      </h2>
                       <p className="mt-1 text-sm text-slate-600">
-                        Price changes apply only to students enrolled after saving. Existing ledger
-                        values are unchanged.
+                        Price changes apply only to students enrolled after
+                        saving. Existing ledger values are unchanged.
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -1581,22 +2131,36 @@ function App() {
                       </thead>
                       <tbody>
                         {feeSettings.map((grade) => (
-                          <tr key={grade.id} className="border-t border-slate-200">
-                            <td className="px-3 py-2 font-medium">{grade.name}</td>
-                            {["generalFees", "tuition", "books"].map((field) => (
-                              <td key={field} className="px-3 py-2 text-right">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={grade[field]}
-                                  onChange={(e) =>
-                                    updateFeeSetting(grade.id, field, e.target.value)
-                                  }
-                                  className="w-32 rounded-md border border-slate-300 px-2 py-1 text-right"
-                                />
-                              </td>
-                            ))}
+                          <tr
+                            key={grade.id}
+                            className="border-t border-slate-200"
+                          >
+                            <td className="px-3 py-2 font-medium">
+                              {grade.name}
+                            </td>
+                            {["generalFees", "tuition", "books"].map(
+                              (field) => (
+                                <td
+                                  key={field}
+                                  className="px-3 py-2 text-right"
+                                >
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={grade[field]}
+                                    onChange={(e) =>
+                                      updateFeeSetting(
+                                        grade.id,
+                                        field,
+                                        e.target.value,
+                                      )
+                                    }
+                                    className="w-32 rounded-md border border-slate-300 px-2 py-1 text-right"
+                                  />
+                                </td>
+                              ),
+                            )}
                             <td className="px-3 py-2 text-right font-semibold">
                               {currency(grade.grandTotal)}
                             </td>
@@ -1608,14 +2172,19 @@ function App() {
                 </div>
 
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-                  <h2 className="text-lg font-semibold text-amber-950">Archive All Students</h2>
+                  <h2 className="text-lg font-semibold text-amber-950">
+                    Archive All Students
+                  </h2>
                   <p className="mt-1 text-sm text-amber-900">
-                    Saves the selected year as a past school year, then opens a fresh current year.
-                    Past years stay selectable for viewing, editing, and SOA printing.
+                    Saves the selected year as a past school year, then opens a
+                    fresh current year. Past years stay selectable for viewing,
+                    editing, and SOA printing.
                   </p>
                   <div className="mt-4 grid gap-3 md:grid-cols-5">
                     <label className="flex flex-col gap-1">
-                      <span className="text-xs font-medium text-amber-950">S.Y start</span>
+                      <span className="text-xs font-medium text-amber-950">
+                        S.Y start
+                      </span>
                       <input
                         type="number"
                         min="1900"
@@ -1624,12 +2193,17 @@ function App() {
                         placeholder="2026"
                         value={archiveForm.startYear}
                         onChange={(e) =>
-                          setArchiveForm((old) => ({ ...old, startYear: e.target.value }))
+                          setArchiveForm((old) => ({
+                            ...old,
+                            startYear: e.target.value,
+                          }))
                         }
                       />
                     </label>
                     <label className="flex flex-col gap-1">
-                      <span className="text-xs font-medium text-amber-950">S.Y end</span>
+                      <span className="text-xs font-medium text-amber-950">
+                        S.Y end
+                      </span>
                       <input
                         type="number"
                         min="1900"
@@ -1638,7 +2212,10 @@ function App() {
                         placeholder="2027"
                         value={archiveForm.endYear}
                         onChange={(e) =>
-                          setArchiveForm((old) => ({ ...old, endYear: e.target.value }))
+                          setArchiveForm((old) => ({
+                            ...old,
+                            endYear: e.target.value,
+                          }))
                         }
                       />
                     </label>
@@ -1648,7 +2225,10 @@ function App() {
                       placeholder="Admin password"
                       value={archiveForm.firstPassword}
                       onChange={(e) =>
-                        setArchiveForm((old) => ({ ...old, firstPassword: e.target.value }))
+                        setArchiveForm((old) => ({
+                          ...old,
+                          firstPassword: e.target.value,
+                        }))
                       }
                     />
                     <input
@@ -1657,13 +2237,21 @@ function App() {
                       placeholder="Re-enter admin password"
                       value={archiveForm.secondPassword}
                       onChange={(e) =>
-                        setArchiveForm((old) => ({ ...old, secondPassword: e.target.value }))
+                        setArchiveForm((old) => ({
+                          ...old,
+                          secondPassword: e.target.value,
+                        }))
                       }
                     />
                     <button
                       type="button"
                       onClick={handleArchiveAllStudents}
-                      disabled={isSaving || isLoading || !activeSchoolYear || !activeSchoolYear.isCurrent}
+                      disabled={
+                        isSaving ||
+                        isLoading ||
+                        !activeSchoolYear ||
+                        !activeSchoolYear.isCurrent
+                      }
                       className="rounded-md bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-50"
                     >
                       Archive All
@@ -1672,7 +2260,8 @@ function App() {
                   <p className="mt-2 text-xs text-amber-900">
                     Archive label preview:{" "}
                     <span className="font-semibold">
-                      S.Y {archiveForm.startYear || "____"} to {archiveForm.endYear || "____"}
+                      S.Y {archiveForm.startYear || "____"} to{" "}
+                      {archiveForm.endYear || "____"}
                     </span>
                   </p>
                 </div>
@@ -1682,12 +2271,15 @@ function App() {
                     Delete School Year Archive
                   </h2>
                   <p className="mt-1 text-sm text-rose-800">
-                    Permanently deletes a past school year, including its students and SOA records.
-                    The current school year cannot be selected.
+                    Permanently deletes a past school year, including its
+                    students and SOA records. The current school year cannot be
+                    selected.
                   </p>
                   <div className="mt-4 grid gap-3 md:grid-cols-4">
                     <label className="flex flex-col gap-1">
-                      <span className="text-xs font-medium text-rose-900">Past school year</span>
+                      <span className="text-xs font-medium text-rose-900">
+                        Past school year
+                      </span>
                       <select
                         className="rounded-md border border-rose-300 px-3 py-2 text-sm"
                         value={deleteArchiveForm.schoolYearId}
@@ -1701,7 +2293,10 @@ function App() {
                       >
                         <option value="">Select archive</option>
                         {archivedSchoolYears.map((year) => (
-                          <option key={year.schoolYearId} value={year.schoolYearId}>
+                          <option
+                            key={year.schoolYearId}
+                            value={year.schoolYearId}
+                          >
                             {year.label}
                           </option>
                         ))}
@@ -1803,7 +2398,10 @@ function App() {
                     className="flex-1 rounded-md border border-slate-300 px-2 py-2 text-sm"
                     value={printDateRange.startDate}
                     onChange={(e) =>
-                      setPrintDateRange((o) => ({ ...o, startDate: e.target.value }))
+                      setPrintDateRange((o) => ({
+                        ...o,
+                        startDate: e.target.value,
+                      }))
                     }
                   />
                   <input
@@ -1811,7 +2409,10 @@ function App() {
                     className="flex-1 rounded-md border border-slate-300 px-2 py-2 text-sm"
                     value={printDateRange.endDate}
                     onChange={(e) =>
-                      setPrintDateRange((o) => ({ ...o, endDate: e.target.value }))
+                      setPrintDateRange((o) => ({
+                        ...o,
+                        endDate: e.target.value,
+                      }))
                     }
                   />
                 </div>
@@ -1823,7 +2424,9 @@ function App() {
                 className="rounded-md border border-slate-300 px-3 py-2 text-sm"
                 value={billToInput}
                 onChange={(e) => setBillToInput(e.target.value)}
-                placeholder={selectedStudent?.studentName || "Student / guardian name"}
+                placeholder={
+                  selectedStudent?.studentName || "Student / guardian name"
+                }
               />
             </label>
             <div className="mt-4 flex justify-end gap-2">
@@ -1847,12 +2450,21 @@ function App() {
       )}
 
       <div className="print-root hidden">
-        <SoaPrintBundle
-          tickets={tickets}
-          billToPrinted={billToPrinted}
-          documentDate={documentDate}
-          schoolYearLabel={activeSchoolYear?.label ?? ""}
-        />
+        {printDocumentType === "soa" ? (
+          <SoaPrintBundle
+            tickets={tickets}
+            billToPrinted={billToPrinted}
+            documentDate={documentDate}
+            schoolYearLabel={activeSchoolYear?.label ?? ""}
+          />
+        ) : (
+          <GradeNameListPrintBundle
+            gradeName={nameListPrintData.gradeName}
+            students={nameListPrintData.students}
+            schoolYearLabel={activeSchoolYear?.label ?? ""}
+            documentDate={documentDate}
+          />
+        )}
       </div>
     </div>
   );

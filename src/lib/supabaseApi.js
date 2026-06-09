@@ -140,6 +140,17 @@ export async function insertStudent({ schoolYearId, studentName, gradeLevelId })
   return mapStudent(data);
 }
 
+export async function updateStudentName(studentId, studentName) {
+  const { data, error } = await supabase
+    .from("students")
+    .update({ student_name: studentName })
+    .eq("student_id", studentId)
+    .select("student_id, school_year_id, student_name, grade_level_id")
+    .single();
+  if (error) throw error;
+  return mapStudent(data);
+}
+
 export async function insertSoaRow({
   schoolYearId,
   studentId,
