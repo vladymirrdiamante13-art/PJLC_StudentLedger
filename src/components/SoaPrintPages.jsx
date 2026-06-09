@@ -56,7 +56,7 @@ function HalfPage({
         </div>
       </div>
 
-      <table className="mt-2 w-full shrink-0 border-collapse text-[9px]">
+      <table className="mt-2 w-full shrink-0 border-collapse text-[11px]">
         <tbody>
           <tr>
             <td className="border border-black px-1.5 py-0.5 font-bold">BILL TO</td>
@@ -70,7 +70,7 @@ function HalfPage({
       </table>
 
       <div className="soa-ledger-body mt-2 min-h-0 flex-1 overflow-hidden">
-        <table className="w-full border-collapse text-[9px]">
+        <table className="w-full border-collapse text-[11px]">
           <thead>
             <tr>
               <th className="w-[17%] border border-black px-1 py-0.5 text-left font-bold">Date</th>
@@ -103,7 +103,7 @@ function HalfPage({
       <div className="soa-half-footer mt-auto shrink-0 pt-1">
         {isLast ? (
           <div className="flex justify-end">
-            <div className="text-[9px]">
+            <div className="text-[11px]">
               <div className="flex min-w-[200px] justify-between gap-4 border border-black px-2 py-0.5">
                 <span className="font-semibold">Amount Due: Php</span>
                 <span className="font-semibold">{fmt(amountDue)}</span>
@@ -115,7 +115,7 @@ function HalfPage({
             </div>
           </div>
         ) : (
-          <p className="text-center text-[8px] text-stone-600">Continued on next page...</p>
+          <p className="text-center text-[10px] text-stone-600">Continued on next page...</p>
         )}
       </div>
     </section>
