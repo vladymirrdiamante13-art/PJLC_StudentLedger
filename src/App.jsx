@@ -879,7 +879,6 @@ function App() {
         orNumber: "",
         customPurpose: "",
         customMonth: "",
-        date: today(),
       }));
     });
   };
