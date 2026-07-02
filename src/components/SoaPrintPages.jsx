@@ -30,7 +30,7 @@ function HalfPage({
 }) {
   return (
     <section
-      className={`soa-half-page box-border flex h-[5.5in] w-[8.5in] flex-col overflow-hidden p-3 text-black ${
+      className={`soa-half-page box-border flex h-[5.5in] w-[8.5in] flex-col overflow-hidden pl-3 pr-8 py-3 text-black ${
         isTopOnSheet ? "soa-half-page--top" : ""
       }`}
     >
