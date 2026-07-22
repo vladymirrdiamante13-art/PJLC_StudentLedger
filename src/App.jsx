@@ -510,6 +510,60 @@ function GradeNameListPrintBundle({ gradeName, students, schoolYearLabel, docume
   );
 }
 
+function SelectedStudentsPrintBundle({ students, schoolYearLabel, documentDate }) {
+  const pages = chunkRows(students, 30);
+
+  return (
+    <>
+      {pages.map((pageStudents, pageIndex) => {
+        const offset = pageIndex * 30;
+        return (
+          <section key={`selected-list-${pageIndex}`} className="name-list-page">
+            <div className="name-list-header">
+              <p className="name-list-school">Palawan Jewels Learning Center</p>
+              <h1>Selected Students List</h1>
+              <p>
+                {schoolYearLabel}
+                {schoolYearLabel && documentDate ? " · " : ""}
+                {documentDate}
+              </p>
+            </div>
+            <table className="name-list-table selected-students-table">
+              <thead>
+                <tr>
+                  <th className="name-list-number">#</th>
+                  <th>Name</th>
+                  <th>Grade</th>
+                  <th className="selected-students-balance">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageStudents.map((student, index) => (
+                  <tr key={student.studentId}>
+                    <td className="name-list-number">{offset + index + 1}</td>
+                    <td>{student.studentName}</td>
+                    <td>{student.gradeName}</td>
+                    <td className="selected-students-balance">
+                      {currency(student.balance)}
+                    </td>
+                  </tr>
+                ))}
+                {pageStudents.length === 0 && (
+                  <tr>
+                    <td className="name-list-empty" colSpan={4}>
+                      No students selected
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
 function App() {
   const [isAppUnlocked, setIsAppUnlocked] = useState(
     () => sessionStorage.getItem(AUTH_SESSION_KEY) === "true",
@@ -574,6 +628,9 @@ function App() {
   const [nameListGradeId, setNameListGradeId] = useState("");
   const [nameListPrintData, setNameListPrintData] = useState({
     gradeName: "",
+    students: [],
+  });
+  const [selectedListPrintData, setSelectedListPrintData] = useState({
     students: [],
   });
   const [printDateRange, setPrintDateRange] = useState({
@@ -1137,6 +1194,24 @@ function App() {
     if (allTickets.length === 0) return;
     setBillToPrinted("");
     setTickets(allTickets);
+    setTimeout(() => window.print(), 10);
+  };
+
+  const printSelectedStudentsList = () => {
+    const selectedIds = new Set(selectedPrintStudentIds);
+    const rows = sortedStudents
+      .filter((student) => selectedIds.has(student.studentId))
+      .map((student) => ({
+        studentId: student.studentId,
+        studentName: student.studentName,
+        gradeName: getGradeName(student.gradeLevelId),
+        balance: studentBalanceMap[student.studentId] ?? 0,
+      }))
+      .sort((a, b) => a.studentName.localeCompare(b.studentName));
+
+    if (rows.length === 0) return;
+    setPrintDocumentType("selected-list");
+    setSelectedListPrintData({ students: rows });
     setTimeout(() => window.print(), 10);
   };
 
@@ -1799,16 +1874,25 @@ function App() {
                   </button>
                   <button
                     type="button"
+                    onClick={printSelectedStudentsList}
+                    disabled={selectedPrintStudentIds.length === 0 || isLoading}
+                    className="rounded-md bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    Print Selected List
+                  </button>
+                  <button
+                    type="button"
                     onClick={printSelectedStudents}
                     disabled={selectedPrintStudentIds.length === 0 || isLoading}
                     className="rounded-md bg-indigo-700 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-800 disabled:opacity-50"
                   >
-                    Print Selected
+                    Print Selected SOA
                   </button>
                 </div>
               </div>
               <p className="mt-1 text-sm text-slate-600">
-                Checked students will each receive an SOA copy.
+                Print Selected List prints name, grade, and balance only. Print
+                Selected SOA prints a full statement for each checked student.
               </p>
               <div className="mt-3 max-h-[28rem] overflow-auto rounded-md border border-slate-200">
                 <table className="min-w-full text-sm">
@@ -2587,17 +2671,25 @@ function App() {
       )}
 
       <div className="print-root hidden">
-        {printDocumentType === "soa" ? (
+        {printDocumentType === "soa" && (
           <SoaPrintBundle
             tickets={tickets}
             billToPrinted={billToPrinted}
             documentDate={documentDate}
             schoolYearLabel={activeSchoolYear?.label ?? ""}
           />
-        ) : (
+        )}
+        {printDocumentType === "name-list" && (
           <GradeNameListPrintBundle
             gradeName={nameListPrintData.gradeName}
             students={nameListPrintData.students}
+            schoolYearLabel={activeSchoolYear?.label ?? ""}
+            documentDate={documentDate}
+          />
+        )}
+        {printDocumentType === "selected-list" && (
+          <SelectedStudentsPrintBundle
+            students={selectedListPrintData.students}
             schoolYearLabel={activeSchoolYear?.label ?? ""}
             documentDate={documentDate}
           />

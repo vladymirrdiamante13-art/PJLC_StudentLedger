@@ -141,4 +141,23 @@ body {
     text-align: center;
     color: #64748b;
   }
+
+  .selected-students-table th {
+    height: 0.3in;
+    border-bottom: 2px solid #374151;
+    padding: 0.035in 0.08in;
+    font-size: 9.5pt;
+    font-weight: 700;
+    text-align: left;
+  }
+
+  .selected-students-table th.name-list-number {
+    text-align: right;
+  }
+
+  .selected-students-balance {
+    width: 1.1in;
+    text-align: right;
+    font-weight: 600;
+  }
 }
